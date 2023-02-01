@@ -74,6 +74,9 @@ def process_folder(folder_path, output_folder_path = None, db_change = None, pre
     output_folder_path = Path(output_folder_path)
 
     for filename in os.listdir(folder_path):
+        if not filename.endswith('mp3'):
+            continue
+
         # Process individual podcast file
         pod = process_pod(filepath = Path(folder_path) / filename, db_change = db_change)
 

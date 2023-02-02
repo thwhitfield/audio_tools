@@ -4,6 +4,7 @@ from gtts import gTTS
 from io import BytesIO
 from pydub import AudioSegment
 from pathlib import Path
+import click
 
 def process_pod(filepath, db_change = None):
     """Process podcast file to add audio saying the name of the file to the beginning of the
@@ -45,7 +46,13 @@ def process_pod(filepath, db_change = None):
 
     return pod2
 
-def process_folder(folder_path, output_folder_path = None, db_change = None, prefix = None, suffix = None):
+@click.command()
+@click.option('--folder_path', default = '.', help='Folder path containing mp3s to modify')
+@click.option('--output_folder_path', required=False)
+@click.option('--db_change', required=False)
+@click.option('--prefix', required=False)
+@click.option('--suffix', required=False)
+def process_podcast_folder(folder_path, output_folder_path = None, db_change = 0, prefix = None, suffix = None):
     """Process each of the files in a folder.
     
     Args:
@@ -61,6 +68,8 @@ def process_folder(folder_path, output_folder_path = None, db_change = None, pre
     Returns:
         None
     """
+    
+    print('did the function even run?')
 
     # Set defaults for arguments if they're None
     if not output_folder_path:

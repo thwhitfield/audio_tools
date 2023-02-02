@@ -15,5 +15,9 @@ setuptools.setup(
     install_requires = [
         'pydub',
         'gTTS'
-    ]
+    ],
+    entry_points = '''
+    [console_scripts]
+    process_podcast_folder=audio_tools:process_podcast_folder
+    '''
 )

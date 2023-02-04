@@ -52,7 +52,7 @@ def process_pod(filepath, db_change = None):
 @click.option('--db_change', required=False)
 @click.option('--prefix', required=False)
 @click.option('--suffix', required=False)
-def process_podcast_folder(folder_path, output_folder_path = None, db_change = 0, prefix = None, suffix = None):
+def process_podcast_folder(folder_path, output_folder_path = None, db_change = 0, prefix = 'louder_', suffix = None):
     """Process each of the files in a folder.
     
     Args:
@@ -68,14 +68,10 @@ def process_podcast_folder(folder_path, output_folder_path = None, db_change = 0
     Returns:
         None
     """
-    
-    print('did the function even run?')
 
     # Set defaults for arguments if they're None
     if not output_folder_path:
         output_folder_path = folder_path
-    if not prefix:
-        prefix = ''
     if not suffix:
         suffix = ''
 

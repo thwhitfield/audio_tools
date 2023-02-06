@@ -4,7 +4,7 @@ from gtts import gTTS
 from io import BytesIO
 from pydub import AudioSegment
 from pathlib import Path
-import click
+# import click
 
 def process_pod(filepath, db_change = None):
     """Process podcast file to add audio saying the name of the file to the beginning of the
@@ -46,12 +46,12 @@ def process_pod(filepath, db_change = None):
 
     return pod2
 
-@click.command()
-@click.option('--folder_path', default = '.', help='Folder path containing mp3s to modify')
-@click.option('--output_folder_path', required=False)
-@click.option('--db_change', required=False)
-@click.option('--prefix', required=False)
-@click.option('--suffix', required=False)
+# @click.command()
+# @click.option('--folder_path', default = '.', help='Folder path containing mp3s to modify')
+# @click.option('--output_folder_path', required=False)
+# @click.option('--db_change', required=False)
+# @click.option('--prefix', required=False)
+# @click.option('--suffix', required=False)
 def process_podcast_folder(folder_path, output_folder_path = None, db_change = 0, prefix = 'louder_', suffix = None):
     """Process each of the files in a folder.
     
@@ -62,7 +62,7 @@ def process_podcast_folder(folder_path, output_folder_path = None, db_change = 0
             files should be saved
         db_change (int, default: None): number of decibels to change the audio (positive values increase the 
             sound level)
-        prefix (str, default: None): prefix to add to the output filenames
+        prefix (str, default: 'louder_'): prefix to add to the output filenames
         suffix (str, default: None): suffix to add to the output filenames
 
     Returns:
@@ -81,11 +81,15 @@ def process_podcast_folder(folder_path, output_folder_path = None, db_change = 0
     for filename in os.listdir(folder_path):
         if not filename.endswith('mp3'):
             continue
+            
+        try:
 
-        # Process individual podcast file
-        pod = process_pod(filepath = Path(folder_path) / filename, db_change = db_change)
+            # Process individual podcast file
+            pod = process_pod(filepath = Path(folder_path) / filename, db_change = db_change)
 
-        # Save processed pod file to output path
-        output_filepath = (output_folder_path / 
-                           Path(prefix + Path(filename).stem + suffix + Path(filename).suffix))  
-        pod.export(output_filepath)  
+            # Save processed pod file to output path
+            output_filepath = (output_folder_path / 
+                               Path(prefix + Path(filename).stem + suffix + Path(filename).suffix))  
+            pod.export(output_filepath)
+        except:
+            print(f"Failed to process: {filename}")

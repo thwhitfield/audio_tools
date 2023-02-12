@@ -1,7 +1,11 @@
+"""Functions which can be used to download mp3s from a website, especially from the history of
+rome website."""
+
 import requests
 from bs4 import BeautifulSoup
 import re
 from pathlib import Path
+from urllib.request import urlopen
 
 def get_list_of_mp3s_from_url(url):
     """Get list of all the mp3s from a url
@@ -38,11 +42,11 @@ def download_list_of_mp3_urls(mp3_list, output_folder = '.'):
     for url in mp3_list:
         filename = url.split('/')[-1]
         filepath = Path(output_folder) / filename
-        
-        audio_clip = requests.get(url)
+
+        r = urlopen(url)
 
         with open(filepath, 'wb') as f:
-            f.write(audio_clip.content)
+            f.write(r.read())
 
 def get_history_of_rome_mp3_urls(rome_archive_url = 'https://thehistoryofrome.typepad.com/the_history_of_rome/archives.html'):
     """Get list of all the history of rome mp3 files by scraping the history of rome archives

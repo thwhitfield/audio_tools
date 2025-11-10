@@ -133,7 +133,7 @@ def split_podcast(filepaths, output_folder_path, split_length=20):
 
             pod_chunk = pod[start_time:end_time]
 
-            chunk_filename = f"{filepath.stem}_part{i+1}{filepath.suffix}"
+            chunk_filename = f"{filepath.stem}_part{i+1:02d}{filepath.suffix}"
             chunk_filepath = output_folder_path / chunk_filename
 
             pod_chunk.export(chunk_filepath)

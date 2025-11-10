@@ -137,3 +137,38 @@ def split_podcast(filepaths, output_folder_path, split_length=20):
             chunk_filepath = output_folder_path / chunk_filename
 
             pod_chunk.export(chunk_filepath)
+
+
+def full_process_podcast_episode(
+    filepath,
+    db_change=10,
+):
+    """Fully process a podcast episode by adjusting sound level and adding filename audio.
+
+    Args:
+        filepath (str, path): filepath of the podcast audio mp3 to be processed
+        db_change (int, default: 10): number of decibels to change the audio (positive values increase the
+            sound level)
+    Returns:
+        output_path (Path): path to the processed podcast episode
+    """
+
+    stem = Path(filepath).stem
+    output_folder = Path(filepath).parent / stem
+
+    if not output_folder.exists():
+        output_folder.mkdir(parents=True, exist_ok=True)
+
+    split_podcast(
+        filepaths=[filepath],
+        output_folder_path=output_folder,
+        split_length=15,
+    )
+
+    process_podcast_folder(
+        folder_path=output_folder,
+        output_folder_path=output_folder,
+        db_change=db_change,
+    )
+
+    return output_folder

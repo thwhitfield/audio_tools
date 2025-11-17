@@ -8,7 +8,7 @@ from pydub import AudioSegment
 # import click
 
 
-def process_pod(filepath, db_change=None):
+def process_pod(filepath, db_change=None, start_audio_text=None):
     """Process podcast file to add audio saying the name of the file to the beginning of the
     audio file, and to change the overall sound level if necessary.
 
@@ -30,8 +30,11 @@ def process_pod(filepath, db_change=None):
         pod = pod + db_change
 
     # Replace underscores with spaces so that the audio pronounces individual words
-    filename_text = filename.replace("_", " ").replace(".mp3", "")
-    filename_audio = gTTS(text=filename_text)
+    if start_audio_text is None:
+        filename_text = filename.replace("_", " ").replace(".mp3", "")
+        filename_audio = gTTS(text=filename_text)
+    else:
+        filename_audio = gTTS(text=start_audio_text)
 
     # Create temporary fake-file to 'save' the audio to and then add it to the podcast
     filename_audio_file = BytesIO()

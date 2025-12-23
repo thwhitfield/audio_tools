@@ -59,7 +59,12 @@ def process_pod(filepath, db_change=None, start_audio_text=None):
 # @click.option('--prefix', required=False)
 # @click.option('--suffix', required=False)
 def process_podcast_folder(
-    folder_path, output_folder_path=None, db_change=0, prefix="louder_", suffix=None
+    folder_path,
+    output_folder_path=None,
+    db_change=0,
+    prefix="louder_",
+    suffix=None,
+    start_audio_text_map=None,
 ):
     """Process each of the files in a folder.
 
@@ -72,6 +77,7 @@ def process_podcast_folder(
             sound level)
         prefix (str, default: 'louder_'): prefix to add to the output filenames
         suffix (str, default: None): suffix to add to the output filenames
+        start_audio_text_map (dict, default: None): dictionary mapping filenames to custom start audio text
 
     Returns:
         None
@@ -91,10 +97,16 @@ def process_podcast_folder(
             continue
 
         try:
+            # Determine start audio text for this file
+            start_audio_text = None
+            if start_audio_text_map and filename in start_audio_text_map:
+                start_audio_text = start_audio_text_map[filename]
 
             # Process individual podcast file
             pod = process_pod(
-                filepath=Path(folder_path) / filename, db_change=db_change
+                filepath=Path(folder_path) / filename,
+                db_change=db_change,
+                start_audio_text=start_audio_text,
             )
 
             # Save processed pod file to output path
@@ -114,11 +126,13 @@ def split_podcast(filepaths, output_folder_path, split_length=20):
         split_length (int, default: 20): length in minutes of each split chunk
 
     Returns:
-        None
+        chunk_filenames (list): list of generated chunk filenames
     """
 
     if not Path(output_folder_path).exists():
         Path(output_folder_path).mkdir(parents=True, exist_ok=True)
+
+    chunk_filenames = []
 
     for filepath in filepaths:
         filepath = Path(filepath)
@@ -140,11 +154,16 @@ def split_podcast(filepaths, output_folder_path, split_length=20):
             chunk_filepath = output_folder_path / chunk_filename
 
             pod_chunk.export(chunk_filepath)
+            chunk_filenames.append(chunk_filename)
+
+    return chunk_filenames
 
 
 def full_process_podcast_episode(
     filepath,
     db_change=10,
+    split_length=5,
+    use_part_numbers_only=False,
 ):
     """Fully process a podcast episode by adjusting sound level and adding filename audio.
 
@@ -152,6 +171,8 @@ def full_process_podcast_episode(
         filepath (str, path): filepath of the podcast audio mp3 to be processed
         db_change (int, default: 10): number of decibels to change the audio (positive values increase the
             sound level)
+        use_part_numbers_only (bool, default: False): if True, use only "part 1", "part 2", etc. as the
+            start audio text instead of the full filename
     Returns:
         output_path (Path): path to the processed podcast episode
     """
@@ -162,16 +183,24 @@ def full_process_podcast_episode(
     if not output_folder.exists():
         output_folder.mkdir(parents=True, exist_ok=True)
 
-    split_podcast(
+    chunk_filenames = split_podcast(
         filepaths=[filepath],
         output_folder_path=output_folder,
-        split_length=15,
+        split_length=split_length,
     )
+
+    # Create text mapping if using part numbers only
+    start_audio_text_map = None
+    if use_part_numbers_only:
+        start_audio_text_map = {}
+        for i, chunk_filename in enumerate(chunk_filenames, start=1):
+            start_audio_text_map[chunk_filename] = f"part {i}"
 
     process_podcast_folder(
         folder_path=output_folder,
         output_folder_path=output_folder,
         db_change=db_change,
+        start_audio_text_map=start_audio_text_map,
     )
 
     return output_folder

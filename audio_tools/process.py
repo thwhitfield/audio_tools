@@ -162,8 +162,8 @@ def split_podcast(filepaths, output_folder_path, split_length=20):
 def full_process_podcast_episode(
     filepath,
     db_change=10,
-    split_length=5,
-    use_part_numbers_only=False,
+    split_length=10,
+    use_part_numbers_only=True,
 ):
     """Fully process a podcast episode by adjusting sound level and adding filename audio.
 

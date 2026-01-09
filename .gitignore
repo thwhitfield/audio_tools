@@ -3,3 +3,9 @@
 *__pycache__
 data/
 .DS_Store
+
+# PyInstaller build artifacts
+build_venv/
+app/build/
+app/dist/
+*.spec.bak

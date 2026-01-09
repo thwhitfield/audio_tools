@@ -159,48 +159,97 @@ def split_podcast(filepaths, output_folder_path, split_length=20):
     return chunk_filenames
 
 
+def _generate_intro_audio(text):
+    """Generate a spoken intro audio segment from text.
+
+    Args:
+        text (str): text to convert to speech
+
+    Returns:
+        AudioSegment: audio segment of the spoken text
+    """
+    audio = gTTS(text=text)
+    audio_file = BytesIO()
+    audio.write_to_fp(audio_file)
+    audio_file.seek(0)
+    return AudioSegment.from_mp3(audio_file)
+
+
 def full_process_podcast_episode(
     filepath,
     db_change=10,
     split_length=10,
     use_part_numbers_only=True,
+    progress_callback=None,
 ):
     """Fully process a podcast episode by adjusting sound level and adding filename audio.
+
+    This optimized version loads the file once, applies volume adjustment, then splits
+    and adds intros in a single pass - avoiding intermediate disk writes.
 
     Args:
         filepath (str, path): filepath of the podcast audio mp3 to be processed
         db_change (int, default: 10): number of decibels to change the audio (positive values increase the
             sound level)
-        use_part_numbers_only (bool, default: False): if True, use only "part 1", "part 2", etc. as the
+        use_part_numbers_only (bool, default: True): if True, use only "part 1", "part 2", etc. as the
             start audio text instead of the full filename
+        progress_callback (callable, default: None): optional callback function that receives
+            (current_chunk, total_chunks, status_message) to report progress
     Returns:
         output_path (Path): path to the processed podcast episode
     """
-
-    stem = Path(filepath).stem
-    output_folder = Path(filepath).parent / stem
+    filepath = Path(filepath)
+    stem = filepath.stem
+    output_folder = filepath.parent / stem
 
     if not output_folder.exists():
         output_folder.mkdir(parents=True, exist_ok=True)
 
-    chunk_filenames = split_podcast(
-        filepaths=[filepath],
-        output_folder_path=output_folder,
-        split_length=split_length,
-    )
+    # Report loading status
+    if progress_callback:
+        progress_callback(0, 1, "Loading audio file...")
 
-    # Create text mapping if using part numbers only
-    start_audio_text_map = None
-    if use_part_numbers_only:
-        start_audio_text_map = {}
-        for i, chunk_filename in enumerate(chunk_filenames, start=1):
-            start_audio_text_map[chunk_filename] = f"part {i}"
+    # Load the full podcast once
+    pod = AudioSegment.from_mp3(filepath)
 
-    process_podcast_folder(
-        folder_path=output_folder,
-        output_folder_path=output_folder,
-        db_change=db_change,
-        start_audio_text_map=start_audio_text_map,
-    )
+    # Apply volume adjustment to the entire file (more efficient than per-chunk)
+    if db_change:
+        if progress_callback:
+            progress_callback(0, 1, "Adjusting volume...")
+        pod = pod + db_change
+
+    # Calculate split parameters
+    split_ms = split_length * 60000  # Convert minutes to milliseconds
+    total_length = len(pod)
+    num_chunks = (total_length // split_ms) + (1 if total_length % split_ms else 0)
+
+    # Process each chunk in memory and export directly
+    for i in range(num_chunks):
+        if progress_callback:
+            progress_callback(i, num_chunks, f"Processing chunk {i + 1} of {num_chunks}...")
+
+        start_time = i * split_ms
+        end_time = min((i + 1) * split_ms, total_length)
+
+        # Extract chunk (already has volume adjusted)
+        chunk = pod[start_time:end_time]
+
+        # Generate intro audio
+        if use_part_numbers_only:
+            intro_text = f"part {i + 1}"
+        else:
+            intro_text = stem.replace("_", " ")
+
+        intro = _generate_intro_audio(intro_text)
+
+        # Combine intro + chunk
+        final_chunk = intro + chunk
+
+        # Export directly (single disk write per chunk)
+        output_filename = f"louder_{stem}_part{i + 1:02d}.mp3"
+        final_chunk.export(output_folder / output_filename)
+
+    if progress_callback:
+        progress_callback(num_chunks, num_chunks, "Complete!")
 
     return output_folder

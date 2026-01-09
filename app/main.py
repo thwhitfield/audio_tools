@@ -9,6 +9,7 @@ A simple GUI for processing podcast MP3 files:
 
 import sys
 import tempfile
+import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -117,6 +118,8 @@ if mode == "Single File":
 
         if st.button("Process File", type="primary"):
             with st.spinner("Processing audio..."):
+                start_time = time.time()
+
                 # Save uploaded file to temp location
                 with tempfile.NamedTemporaryFile(
                     suffix=".mp3", delete=False
@@ -135,7 +138,8 @@ if mode == "Single File":
                     # Convert to bytes for download
                     audio_bytes = export_audio_to_bytes(processed_audio)
 
-                    st.success("Processing complete!")
+                    elapsed_time = time.time() - start_time
+                    st.success(f"Processing complete! Took {elapsed_time:.1f} seconds.")
 
                     # Create download button
                     output_filename = f"processed_{uploaded_file.name}"
@@ -203,49 +207,70 @@ elif mode == "Full Process (Split + Process)":
         st.audio(uploaded_file, format="audio/mp3")
 
         if st.button("Process File", type="primary", key="full_process_btn"):
-            with st.spinner("Processing audio (this may take a while for long files)..."):
-                # Create temp directory for processing
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    tmp_dir = Path(tmp_dir)
+            start_time = time.time()
 
-                    # Save uploaded file
-                    input_path = tmp_dir / uploaded_file.name
-                    input_path.write_bytes(uploaded_file.getvalue())
+            # Create progress bar and status text
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-                    try:
-                        # Run full processing
-                        output_folder = full_process_podcast_episode(
-                            filepath=input_path,
-                            db_change=db_change,
-                            split_length=split_length,
-                            use_part_numbers_only=use_part_numbers,
-                        )
+            # Create temp directory for processing
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_dir = Path(tmp_dir)
 
-                        # Create zip file of all processed chunks
-                        zip_buffer = BytesIO()
-                        with zipfile.ZipFile(
-                            zip_buffer, "w", zipfile.ZIP_DEFLATED
-                        ) as zip_file:
-                            for mp3_file in output_folder.glob("louder_*.mp3"):
-                                zip_file.write(mp3_file, mp3_file.name)
+                # Save uploaded file
+                input_path = tmp_dir / uploaded_file.name
+                input_path.write_bytes(uploaded_file.getvalue())
 
-                        zip_buffer.seek(0)
+                def update_progress(current, total, message):
+                    if total > 0:
+                        progress_bar.progress(current / total)
+                    status_text.text(message)
 
-                        # Count files
-                        num_files = len(list(output_folder.glob("louder_*.mp3")))
-                        st.success(f"Processing complete! Created {num_files} chunks.")
+                try:
+                    # Run full processing with progress callback
+                    output_folder = full_process_podcast_episode(
+                        filepath=input_path,
+                        db_change=db_change,
+                        split_length=split_length,
+                        use_part_numbers_only=use_part_numbers,
+                        progress_callback=update_progress,
+                    )
 
-                        # Download button for zip
-                        zip_filename = f"{Path(uploaded_file.name).stem}_processed.zip"
-                        st.download_button(
-                            label="Download All Processed Files (ZIP)",
-                            data=zip_buffer.getvalue(),
-                            file_name=zip_filename,
-                            mime="application/zip",
-                        )
+                    # Update progress for zip creation
+                    status_text.text("Creating ZIP file...")
 
-                    except Exception as e:
-                        st.error(f"Error processing file: {e}")
+                    # Create zip file of all processed chunks
+                    zip_buffer = BytesIO()
+                    with zipfile.ZipFile(
+                        zip_buffer, "w", zipfile.ZIP_DEFLATED
+                    ) as zip_file:
+                        for mp3_file in output_folder.glob("louder_*.mp3"):
+                            zip_file.write(mp3_file, mp3_file.name)
+
+                    zip_buffer.seek(0)
+
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    status_text.empty()
+
+                    # Count files
+                    num_files = len(list(output_folder.glob("louder_*.mp3")))
+                    elapsed_time = time.time() - start_time
+                    st.success(f"Processing complete! Created {num_files} chunks in {elapsed_time:.1f} seconds.")
+
+                    # Download button for zip
+                    zip_filename = f"{Path(uploaded_file.name).stem}_processed.zip"
+                    st.download_button(
+                        label="Download All Processed Files (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name=zip_filename,
+                        mime="application/zip",
+                    )
+
+                except Exception as e:
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.error(f"Error processing file: {e}")
 
 
 # =============================================================================
@@ -290,6 +315,8 @@ elif mode == "Batch Process Folder":
 
         if st.button("Process All Files", type="primary", key="batch_btn"):
             with st.spinner(f"Processing {len(uploaded_files)} files..."):
+                start_time = time.time()
+
                 # Create temp directory for processing
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     tmp_dir = Path(tmp_dir)
@@ -321,7 +348,8 @@ elif mode == "Batch Process Folder":
                         zip_buffer.seek(0)
 
                         num_processed = len(list(output_dir.glob("*.mp3")))
-                        st.success(f"Processing complete! Processed {num_processed} files.")
+                        elapsed_time = time.time() - start_time
+                        st.success(f"Processing complete! Processed {num_processed} files in {elapsed_time:.1f} seconds.")
 
                         st.download_button(
                             label="Download All Processed Files (ZIP)",

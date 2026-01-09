@@ -1,0 +1,12 @@
+[global]
+developmentMode = false
+
+[server]
+headless = false
+port = 8501
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#FF6B6B"

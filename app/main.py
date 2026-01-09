@@ -13,10 +13,31 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 
-import streamlit as st
 
-# Add parent directory to path so we can import audio_tools
-sys.path.insert(0, str(Path(__file__).parent.parent))
+def setup_environment():
+    """Setup paths and ffmpeg for both development and bundled modes."""
+    # Determine if we're running as a bundled app
+    if getattr(sys, "frozen", False):
+        # Running as bundled executable
+        bundle_dir = Path(sys._MEIPASS)
+        # Add the bundled audio_tools to path
+        sys.path.insert(0, str(bundle_dir))
+    else:
+        # Running in normal Python environment
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+
+    # Setup ffmpeg using static-ffmpeg if available
+    try:
+        import static_ffmpeg
+
+        static_ffmpeg.add_paths()
+    except ImportError:
+        pass  # Assume ffmpeg is in PATH
+
+
+setup_environment()
+
+import streamlit as st
 
 from audio_tools.process import (
     full_process_podcast_episode,

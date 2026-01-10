@@ -1,6 +1,6 @@
 # Audio Tools Makefile
 
-.PHONY: run build clean kill help icon
+.PHONY: run build clean kill help icon dmg
 
 # Run the Streamlit app (development mode)
 run:
@@ -47,6 +47,17 @@ icon:
 	@rm -rf app/icon.iconset
 	@echo "Created app/icon.icns"
 
+# Create a DMG file for distribution (requires build first)
+dmg:
+	@if [ ! -d "app/dist/Audio Tools.app" ]; then \
+		echo "Error: app/dist/Audio Tools.app not found. Run 'make build' first."; \
+		exit 1; \
+	fi
+	@echo "Creating DMG file..."
+	@rm -f "AudioTools.dmg"
+	hdiutil create -volname "Audio Tools" -srcfolder "app/dist/Audio Tools.app" -ov -format UDZO AudioTools.dmg
+	@echo "Created AudioTools.dmg"
+
 help:
 	@echo "Available commands:"
 	@echo "  make run      - Run the Streamlit app in development mode"
@@ -55,3 +66,4 @@ help:
 	@echo "  make clean    - Remove build artifacts"
 	@echo "  make install  - Install dependencies for development"
 	@echo "  make icon     - Convert app/icon.png to app/icon.icns"
+	@echo "  make dmg      - Create a DMG file for distribution"

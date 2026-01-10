@@ -4,6 +4,7 @@ Tools to process audio data to make it easier to listen to on Shokz OpenSwim MP3
 
 ## Features
 
+- **Podcast Search & Download**: Search for podcasts and episodes using the iTunes API, then download episodes directly in the app
 - **Spoken Intros**: Automatically adds text-to-speech audio of the filename at the beginning of each file
 - **Volume Adjustment**: Increase or decrease audio volume by a specified number of decibels
 - **Speed Adjustment**: Change playback speed while preserving pitch (requires rubberband)
@@ -54,13 +55,15 @@ The built app will be at `app/dist/Audio Tools.app`.
 
 ### GUI (Streamlit App)
 
-The app has three processing modes:
+The app has four modes:
 
-1. **Full Process (Split + Process)**: Upload a long podcast, split it into chunks, add spoken intros to each chunk, and adjust volume/speed.
+1. **Process Podcast**: Search for podcasts online or upload a local MP3 file. Split long episodes into chunks with spoken intros, adjust volume, and change speed.
 
-2. **Single File**: Process a single MP3 file - add a spoken intro, adjust volume, and change speed.
+2. **Single File (No Split)**: Process a single MP3 file without splitting - add a spoken intro, adjust volume, and change speed.
 
 3. **Batch Process Folder**: Upload multiple MP3 files and process them all at once.
+
+4. **About**: Welcome page with documentation and quick access to all modes.
 
 ### Python API
 

@@ -59,7 +59,7 @@ st.markdown("Process podcast MP3 files for your Shokz OpenSwim player")
 # Sidebar for mode selection
 mode = st.sidebar.radio(
     "Processing Mode",
-    ["Single File", "Full Process (Split + Process)", "Batch Process Folder"],
+    ["Full Process (Split + Process)", "Single File", "Batch Process Folder"],
     help="Choose how you want to process your audio files",
 )
 
@@ -84,96 +84,9 @@ def export_audio_to_bytes(audio_segment) -> bytes:
 
 
 # =============================================================================
-# Single File Processing
-# =============================================================================
-if mode == "Single File":
-    st.header("Process Single File")
-    st.markdown("Upload an MP3 file to add a spoken intro and adjust volume.")
-
-    uploaded_file = st.file_uploader("Upload MP3 file", type=["mp3"])
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        db_change = st.slider(
-            "Volume Adjustment (dB)",
-            min_value=-20,
-            max_value=30,
-            value=10,
-            help="Positive values increase volume, negative decrease",
-        )
-
-    with col2:
-        speed = st.slider(
-            "Playback Speed",
-            min_value=0.5,
-            max_value=2.0,
-            value=1.0,
-            step=0.1,
-            key="single_file_speed",
-            help="1.0 = normal, 1.5 = 50% faster, 0.75 = 25% slower",
-        )
-
-    with col3:
-        use_custom_intro = st.checkbox("Use custom intro text")
-        if use_custom_intro:
-            custom_intro = st.text_input(
-                "Custom intro text",
-                placeholder="e.g., 'Episode 1 - Introduction'",
-            )
-        else:
-            custom_intro = None
-
-    if uploaded_file is not None:
-        st.audio(uploaded_file, format="audio/mp3")
-
-        if st.button("Process File", type="primary"):
-            with st.spinner("Processing audio..."):
-                start_time = time.time()
-
-                # Save uploaded file to temp location
-                with tempfile.NamedTemporaryFile(
-                    suffix=".mp3", delete=False
-                ) as tmp_file:
-                    tmp_file.write(uploaded_file.getvalue())
-                    tmp_path = tmp_file.name
-
-                try:
-                    # Process the file
-                    processed_audio = process_pod(
-                        filepath=tmp_path,
-                        db_change=db_change if db_change != 0 else None,
-                        start_audio_text=custom_intro if use_custom_intro else None,
-                        speed=speed,
-                    )
-
-                    # Convert to bytes for download
-                    audio_bytes = export_audio_to_bytes(processed_audio)
-
-                    elapsed_time = time.time() - start_time
-                    st.success(f"Processing complete! Took {elapsed_time:.1f} seconds.")
-
-                    # Create download button
-                    output_filename = f"processed_{uploaded_file.name}"
-                    st.download_button(
-                        label="Download Processed File",
-                        data=audio_bytes,
-                        file_name=output_filename,
-                        mime="audio/mpeg",
-                    )
-
-                except Exception as e:
-                    st.error(f"Error processing file: {e}")
-
-                finally:
-                    # Clean up temp file
-                    Path(tmp_path).unlink(missing_ok=True)
-
-
-# =============================================================================
 # Full Process (Split + Process)
 # =============================================================================
-elif mode == "Full Process (Split + Process)":
+if mode == "Full Process (Split + Process)":
     st.header("Full Process")
     st.markdown(
         """
@@ -193,7 +106,7 @@ elif mode == "Full Process (Split + Process)":
     with col1:
         split_length = st.slider(
             "Chunk Length (minutes)",
-            min_value=5,
+            min_value=1,
             max_value=60,
             value=10,
             help="How long each split chunk should be",
@@ -303,9 +216,16 @@ elif mode == "Full Process (Split + Process)":
                     status_text.empty()
 
                     # Count files
-                    num_files = len(list(output_folder.glob("louder_*.mp3")))
+                    processed_files = sorted(output_folder.glob("louder_*.mp3"))
+                    num_files = len(processed_files)
                     elapsed_time = time.time() - start_time
                     st.success(f"Processing complete! Created {num_files} chunks in {elapsed_time:.1f} seconds.")
+
+                    # Preview first chunk
+                    if processed_files:
+                        st.markdown("**Preview first chunk:**")
+                        first_chunk_bytes = processed_files[0].read_bytes()
+                        st.audio(first_chunk_bytes, format="audio/mp3")
 
                     # Download button for zip
                     zip_filename = f"{Path(uploaded_file.name).stem}_processed.zip"
@@ -320,6 +240,97 @@ elif mode == "Full Process (Split + Process)":
                     progress_bar.empty()
                     status_text.empty()
                     st.error(f"Error processing file: {e}")
+
+
+# =============================================================================
+# Single File Processing
+# =============================================================================
+elif mode == "Single File":
+    st.header("Process Single File")
+    st.markdown("Upload an MP3 file to add a spoken intro and adjust volume.")
+
+    uploaded_file = st.file_uploader("Upload MP3 file", type=["mp3"], key="single_file_uploader")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        db_change = st.slider(
+            "Volume Adjustment (dB)",
+            min_value=-20,
+            max_value=30,
+            value=10,
+            help="Positive values increase volume, negative decrease",
+        )
+
+    with col2:
+        speed = st.slider(
+            "Playback Speed",
+            min_value=0.5,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
+            key="single_file_speed",
+            help="1.0 = normal, 1.5 = 50% faster, 0.75 = 25% slower",
+        )
+
+    with col3:
+        use_custom_intro = st.checkbox("Use custom intro text")
+        if use_custom_intro:
+            custom_intro = st.text_input(
+                "Custom intro text",
+                placeholder="e.g., 'Episode 1 - Introduction'",
+            )
+        else:
+            custom_intro = None
+
+    if uploaded_file is not None:
+        st.audio(uploaded_file, format="audio/mp3")
+
+        if st.button("Process File", type="primary"):
+            with st.spinner("Processing audio..."):
+                start_time = time.time()
+
+                # Save uploaded file to temp location
+                with tempfile.NamedTemporaryFile(
+                    suffix=".mp3", delete=False
+                ) as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_path = tmp_file.name
+
+                try:
+                    # Process the file
+                    processed_audio = process_pod(
+                        filepath=tmp_path,
+                        db_change=db_change if db_change != 0 else None,
+                        start_audio_text=custom_intro if use_custom_intro else None,
+                        speed=speed,
+                    )
+
+                    # Convert to bytes for download
+                    audio_bytes = export_audio_to_bytes(processed_audio)
+
+                    elapsed_time = time.time() - start_time
+                    st.success(f"Processing complete! Took {elapsed_time:.1f} seconds.")
+
+                    # Preview processed audio
+                    st.markdown("**Preview processed audio:**")
+                    st.audio(audio_bytes, format="audio/mp3")
+
+                    # Create download button
+                    output_filename = f"processed_{uploaded_file.name}"
+                    st.download_button(
+                        label="Download Processed File",
+                        data=audio_bytes,
+                        file_name=output_filename,
+                        mime="audio/mpeg",
+                    )
+
+                except Exception as e:
+                    st.error(f"Error processing file: {e}")
+
+                finally:
+                    # Clean up temp file
+                    Path(tmp_path).unlink(missing_ok=True)
 
 
 # =============================================================================

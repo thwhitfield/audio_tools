@@ -11,3 +11,4 @@ app/dist/
 app/binaries/
 app/icon.icns
 *.spec.bak
+*.dmg

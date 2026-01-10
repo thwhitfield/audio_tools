@@ -4,6 +4,8 @@ gTTS>=2.3.0
 static-ffmpeg>=2.5
 pyrubberband>=0.3.0
 numpy>=1.20.0
+feedparser>=6.0.0
+requests>=2.28.0
 
 # For building standalone app (not needed for running)
 # pyinstaller>=6.0.0

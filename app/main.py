@@ -54,6 +54,12 @@ from audio_tools.podcast_search import (
     format_duration,
     format_duration_str,
 )
+from audio_tools.youtube_download import (
+    get_video_info,
+    download_audio as download_youtube_audio,
+    format_duration as format_youtube_duration,
+    is_valid_youtube_url,
+)
 
 st.set_page_config(
     page_title="Audio Tools",
@@ -84,7 +90,7 @@ class ProcessingCancelled(Exception):
 
 
 # Mode options - About first as landing page
-ALL_MODES = ["About", "Process Podcast", "Single File (No Split)", "Batch Process Folder"]
+ALL_MODES = ["About", "Process Podcast", "YouTube Audio", "Single File (No Split)", "Batch Process Folder"]
 
 # Initialize the radio key if not present
 if "mode_radio" not in st.session_state:
@@ -94,7 +100,7 @@ if "mode_radio" not in st.session_state:
 mode = st.sidebar.radio(
     "Mode",
     ALL_MODES,
-    captions=["Welcome & help", "Search or upload podcasts", None, None],
+    captions=["Welcome & help", "Search or upload podcasts", "Download from YouTube", None, None],
     key="mode_radio",
 )
 
@@ -170,6 +176,9 @@ if mode == "About":
     def switch_to_process_podcast():
         st.session_state.mode_radio = "Process Podcast"
 
+    def switch_to_youtube_audio():
+        st.session_state.mode_radio = "YouTube Audio"
+
     def switch_to_single_file():
         st.session_state.mode_radio = "Single File (No Split)"
 
@@ -184,6 +193,12 @@ if mode == "About":
         st.button("Process Podcast", type="primary", use_container_width=True, on_click=switch_to_process_podcast)
     with col2:
         st.markdown("Search for podcasts online or upload local MP3 files. Split long episodes into chunks with spoken intros.")
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.button("YouTube Audio", use_container_width=True, on_click=switch_to_youtube_audio)
+    with col2:
+        st.markdown("Download audio from YouTube videos. Just paste a link and process the audio.")
 
     col1, col2 = st.columns([1, 3])
     with col1:
@@ -741,6 +756,282 @@ elif mode == "Process Podcast":
                     # Clear the file_for_processing after successful processing
                     if st.session_state.file_for_processing:
                         st.session_state.file_for_processing = None
+
+                    # Preview first chunk
+                    if processed_files:
+                        st.markdown("**Preview first chunk:**")
+                        first_chunk_bytes = processed_files[0].read_bytes()
+                        st.audio(first_chunk_bytes, format="audio/mp3")
+
+                    # Download button for zip
+                    zip_filename = f"{Path(file_name).stem}_processed.zip"
+                    st.download_button(
+                        label="Download All Processed Files (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name=zip_filename,
+                        mime="application/zip",
+                    )
+
+                except ProcessingCancelled:
+                    progress_bar.empty()
+                    status_text.empty()
+                    cancel_container.empty()
+                    st.warning("Processing cancelled.")
+                    st.session_state.cancel_requested = False
+
+                except Exception as e:
+                    progress_bar.empty()
+                    status_text.empty()
+                    cancel_container.empty()
+                    st.error(f"Error processing file: {e}")
+
+
+# =============================================================================
+# YouTube Audio Download
+# =============================================================================
+elif mode == "YouTube Audio":
+    st.header("YouTube Audio")
+    st.markdown(
+        """
+    Download audio from a YouTube video. Just paste the video URL below.
+    """
+    )
+
+    # Initialize session state for YouTube
+    if "youtube_file_for_processing" not in st.session_state:
+        st.session_state.youtube_file_for_processing = None
+
+    def download_and_store_youtube(url: str, title: str):
+        """Download YouTube audio and store it in session state for processing."""
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+
+        # Download the audio
+        downloaded_path = download_youtube_audio(url, tmp_path)
+        audio_bytes = downloaded_path.read_bytes()
+        downloaded_path.unlink(missing_ok=True)
+
+        # Create safe filename
+        safe_title = "".join(
+            c if c.isalnum() or c in " -_" else "_"
+            for c in title
+        )[:50]
+        filename = f"{safe_title}.mp3"
+
+        st.session_state.youtube_file_for_processing = {
+            "bytes": audio_bytes,
+            "filename": filename,
+        }
+
+    # Check if we already have a file to process
+    if st.session_state.youtube_file_for_processing:
+        # Show the file info
+        st.success(f"Ready to process: {st.session_state.youtube_file_for_processing['filename']}")
+        if st.button("Download different video", key="youtube_choose_different"):
+            st.session_state.youtube_file_for_processing = None
+            st.rerun()
+    else:
+        # URL input
+        youtube_url = st.text_input(
+            "YouTube URL",
+            placeholder="https://www.youtube.com/watch?v=...",
+            key="youtube_url_input",
+        )
+
+        if youtube_url:
+            # Validate URL
+            if not is_valid_youtube_url(youtube_url):
+                st.error("Please enter a valid YouTube URL")
+            else:
+                # Fetch video info
+                with st.spinner("Fetching video info..."):
+                    try:
+                        video_info = get_video_info(youtube_url)
+
+                        col1, col2 = st.columns([1, 3])
+                        with col1:
+                            if video_info.get("thumbnail"):
+                                st.image(video_info["thumbnail"], width=160)
+                        with col2:
+                            st.markdown(f"**{video_info['title']}**")
+                            st.caption(f"by {video_info.get('uploader', 'Unknown')}")
+                            duration = format_youtube_duration(video_info.get("duration"))
+                            if duration:
+                                st.caption(f"Duration: {duration}")
+
+                        if st.button("Download Audio", type="primary", key="youtube_download_btn"):
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+
+                            def update_progress(percent, status):
+                                progress_bar.progress(min(percent / 100, 1.0))
+                                status_text.text(status)
+
+                            try:
+                                with st.spinner("Downloading and converting..."):
+                                    download_and_store_youtube(youtube_url, video_info["title"])
+                                progress_bar.empty()
+                                status_text.empty()
+                                st.rerun()
+                            except Exception as e:
+                                progress_bar.empty()
+                                status_text.empty()
+                                st.error(f"Download failed: {e}")
+
+                    except Exception as e:
+                        st.error(f"Error fetching video info: {e}")
+
+    # Only show processing options if we have a file
+    if st.session_state.youtube_file_for_processing:
+        file_bytes = st.session_state.youtube_file_for_processing["bytes"]
+        file_name = st.session_state.youtube_file_for_processing["filename"]
+
+        st.markdown("---")
+        st.subheader("Processing Options")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            split_length = st.slider(
+                "Chunk Length (minutes)",
+                min_value=1,
+                max_value=60,
+                value=10,
+                key="youtube_split_length",
+                help="How long each split chunk should be",
+            )
+
+        with col2:
+            db_change = st.slider(
+                "Volume Adjustment (dB)",
+                min_value=-20,
+                max_value=30,
+                value=10,
+                key="youtube_db",
+                help="Positive values increase volume",
+            )
+
+        with col3:
+            speed = st.slider(
+                "Playback Speed",
+                min_value=0.5,
+                max_value=2.0,
+                value=1.0,
+                step=0.1,
+                key="youtube_speed",
+                help="1.0 = normal, 1.5 = 50% faster, 0.75 = 25% slower",
+            )
+
+        use_part_numbers = st.checkbox(
+            "Use simple part numbers",
+            value=True,
+            key="youtube_part_numbers",
+            help="If checked, intro will be 'Part 1', 'Part 2', etc. Otherwise uses full filename.",
+        )
+        st.audio(file_bytes, format="audio/mp3")
+
+        # Estimate processing time based on file size and settings
+        file_size_mb = len(file_bytes) / (1024 * 1024)
+        # Estimate audio duration: ~1 MB per minute for typical MP3 at 128kbps
+        estimated_duration_min = file_size_mb * 1.0
+        # After speed adjustment, duration changes
+        adjusted_duration_min = estimated_duration_min / speed if speed != 1.0 else estimated_duration_min
+        estimated_chunks = max(1, int(adjusted_duration_min / split_length) + 1)
+        estimated_time = estimate_processing_time(file_size_mb, speed, estimated_chunks)
+        st.info(f"Estimated processing time: {format_time(estimated_time)} ({estimated_chunks} chunks)")
+
+        if st.button("Process File", type="primary", key="youtube_process_btn"):
+            # Reset cancel flag at start of processing
+            st.session_state.cancel_requested = False
+
+            start_time = time.time()
+            chunk_times = []  # Track time per chunk for estimation
+
+            # Create progress bar, status text, and cancel button
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            cancel_container = st.empty()
+            cancel_container.button("Cancel", key="cancel_youtube_process", on_click=request_cancel)
+
+            # Create temp directory for processing
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_dir = Path(tmp_dir)
+
+                # Save file to temp directory
+                input_path = tmp_dir / file_name
+                input_path.write_bytes(file_bytes)
+
+                last_chunk_time = [start_time]  # Use list to allow mutation in nested function
+
+                def update_progress(current, total, message):
+                    # Check for cancellation
+                    if st.session_state.cancel_requested:
+                        raise ProcessingCancelled("Processing cancelled by user")
+
+                    now = time.time()
+                    elapsed = now - start_time
+
+                    # Track chunk processing times
+                    if current > 0 and total > 1:
+                        chunk_time = now - last_chunk_time[0]
+                        chunk_times.append(chunk_time)
+                        last_chunk_time[0] = now
+
+                    # Calculate ETA
+                    if current > 0 and total > 0 and chunk_times:
+                        avg_chunk_time = sum(chunk_times) / len(chunk_times)
+                        remaining_chunks = total - current
+                        eta_seconds = remaining_chunks * avg_chunk_time
+                        eta_str = f" | ETA: {format_time(eta_seconds, prefix='')}"
+                    else:
+                        eta_str = ""
+
+                    # Format elapsed time
+                    elapsed_str = f"Elapsed: {format_time(elapsed, prefix='')}"
+
+                    if total > 0:
+                        progress_bar.progress(current / total)
+                    status_text.text(f"{message} | {elapsed_str}{eta_str}")
+
+                try:
+                    # Run full processing with progress callback
+                    output_folder = full_process_podcast_episode(
+                        filepath=input_path,
+                        db_change=db_change,
+                        split_length=split_length,
+                        use_part_numbers_only=use_part_numbers,
+                        progress_callback=update_progress,
+                        speed=speed,
+                    )
+
+                    # Update progress for zip creation
+                    elapsed = time.time() - start_time
+                    status_text.text(f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}")
+
+                    # Create zip file of all processed chunks
+                    zip_buffer = BytesIO()
+                    with zipfile.ZipFile(
+                        zip_buffer, "w", zipfile.ZIP_DEFLATED
+                    ) as zip_file:
+                        for mp3_file in output_folder.glob("louder_*.mp3"):
+                            zip_file.write(mp3_file, mp3_file.name)
+
+                    zip_buffer.seek(0)
+
+                    # Clear progress indicators and cancel button
+                    progress_bar.empty()
+                    status_text.empty()
+                    cancel_container.empty()
+
+                    # Count files
+                    processed_files = sorted(output_folder.glob("louder_*.mp3"))
+                    num_files = len(processed_files)
+                    elapsed_time = time.time() - start_time
+                    st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
+
+                    # Clear the file after successful processing
+                    if st.session_state.youtube_file_for_processing:
+                        st.session_state.youtube_file_for_processing = None
 
                     # Preview first chunk
                     if processed_files:

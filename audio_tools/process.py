@@ -2,13 +2,14 @@ import os
 from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 from gtts import gTTS
 from pydub import AudioSegment
 
 # import click
 
 
-def process_pod(filepath, db_change=None, start_audio_text=None):
+def process_pod(filepath, db_change=None, start_audio_text=None, speed=1.0):
     """Process podcast file to add audio saying the name of the file to the beginning of the
     audio file, and to change the overall sound level if necessary.
 
@@ -16,6 +17,8 @@ def process_pod(filepath, db_change=None, start_audio_text=None):
         filepath (str, path): filepath of the podcast audio mp3 to be processed
         db_change (int, default: None): number of decibels to change the audio (positive values increase the
             sound level)
+        start_audio_text (str, default: None): custom text for the spoken intro
+        speed (float, default: 1.0): playback speed multiplier (e.g., 1.5 = 50% faster)
 
     Returns:
         pod2 (AudioSegment): processed audio object
@@ -28,6 +31,9 @@ def process_pod(filepath, db_change=None, start_audio_text=None):
 
     if db_change:
         pod = pod + db_change
+
+    if speed != 1.0:
+        pod = change_speed(pod, speed)
 
     # Replace underscores with spaces so that the audio pronounces individual words
     if start_audio_text is None:
@@ -65,6 +71,7 @@ def process_podcast_folder(
     prefix="louder_",
     suffix=None,
     start_audio_text_map=None,
+    speed=1.0,
 ):
     """Process each of the files in a folder.
 
@@ -78,6 +85,7 @@ def process_podcast_folder(
         prefix (str, default: 'louder_'): prefix to add to the output filenames
         suffix (str, default: None): suffix to add to the output filenames
         start_audio_text_map (dict, default: None): dictionary mapping filenames to custom start audio text
+        speed (float, default: 1.0): playback speed multiplier (e.g., 1.5 = 50% faster)
 
     Returns:
         None
@@ -107,6 +115,7 @@ def process_podcast_folder(
                 filepath=Path(folder_path) / filename,
                 db_change=db_change,
                 start_audio_text=start_audio_text,
+                speed=speed,
             )
 
             # Save processed pod file to output path
@@ -159,48 +168,193 @@ def split_podcast(filepaths, output_folder_path, split_length=20):
     return chunk_filenames
 
 
+def _generate_intro_audio(text):
+    """Generate a spoken intro audio segment from text.
+
+    Args:
+        text (str): text to convert to speech
+
+    Returns:
+        AudioSegment: audio segment of the spoken text
+    """
+    audio = gTTS(text=text)
+    audio_file = BytesIO()
+    audio.write_to_fp(audio_file)
+    audio_file.seek(0)
+    return AudioSegment.from_mp3(audio_file)
+
+
+def _get_rubberband_path():
+    """Get the path to the rubberband binary, handling bundled apps."""
+    import sys
+    import shutil
+
+    # Check if we're running in a PyInstaller bundle
+    if getattr(sys, "frozen", False):
+        # Running as bundled app - PyInstaller puts binaries in _MEIPASS/bin
+        bundle_dir = Path(sys._MEIPASS)
+        bundled_rb = bundle_dir / "bin" / "rubberband"
+        if bundled_rb.exists():
+            # Also need to set DYLD_LIBRARY_PATH for the dylibs
+            bin_dir = str(bundle_dir / "bin")
+            current_path = os.environ.get("DYLD_LIBRARY_PATH", "")
+            if bin_dir not in current_path:
+                os.environ["DYLD_LIBRARY_PATH"] = f"{bin_dir}:{current_path}" if current_path else bin_dir
+            return str(bundled_rb)
+
+    # Fall back to system rubberband
+    system_rb = shutil.which("rubberband")
+    if system_rb:
+        return system_rb
+
+    return None
+
+
+def change_speed(audio_segment, speed=1.0):
+    """Change the playback speed of an audio segment while preserving pitch.
+
+    Uses pyrubberband for high-quality time-stretching that doesn't affect pitch.
+
+    Args:
+        audio_segment (AudioSegment): the audio to modify
+        speed (float, default: 1.0): speed multiplier (e.g., 1.5 = 50% faster, 0.75 = 25% slower)
+
+    Returns:
+        AudioSegment: audio with adjusted speed
+    """
+    if speed == 1.0:
+        return audio_segment
+
+    try:
+        import pyrubberband as pyrb
+    except ImportError:
+        raise ImportError(
+            "pyrubberband is required for speed adjustment. "
+            "Install with: pip install pyrubberband\n"
+            "Also requires rubberband CLI tool: brew install rubberband (macOS)"
+        )
+
+    # Set the rubberband path for pyrubberband to use
+    rb_path = _get_rubberband_path()
+    if rb_path is None:
+        raise RuntimeError(
+            "rubberband binary not found. "
+            "Install with: brew install rubberband (macOS)"
+        )
+
+    # Tell pyrubberband where to find rubberband
+    # pyrubberband uses __RUBBERBAND_UTIL environment variable
+    os.environ["__RUBBERBAND_UTIL"] = rb_path
+
+    # Convert AudioSegment to numpy array
+    samples = np.array(audio_segment.get_array_of_samples())
+    sample_rate = audio_segment.frame_rate
+
+    # Handle stereo audio
+    if audio_segment.channels == 2:
+        samples = samples.reshape((-1, 2))
+
+    # Convert to float for pyrubberband (expects float64 in range [-1, 1])
+    samples_float = samples.astype(np.float64) / (2**15)
+
+    # Time stretch (rate > 1 = faster, rate < 1 = slower)
+    stretched = pyrb.time_stretch(samples_float, sample_rate, speed)
+
+    # Convert back to int16
+    stretched_int = (stretched * (2**15)).astype(np.int16)
+
+    # Convert back to AudioSegment
+    return AudioSegment(
+        stretched_int.tobytes(),
+        frame_rate=sample_rate,
+        sample_width=2,  # 16-bit = 2 bytes
+        channels=audio_segment.channels,
+    )
+
+
 def full_process_podcast_episode(
     filepath,
     db_change=10,
     split_length=10,
     use_part_numbers_only=True,
+    progress_callback=None,
+    speed=1.0,
 ):
     """Fully process a podcast episode by adjusting sound level and adding filename audio.
+
+    This optimized version loads the file once, applies volume adjustment, then splits
+    and adds intros in a single pass - avoiding intermediate disk writes.
 
     Args:
         filepath (str, path): filepath of the podcast audio mp3 to be processed
         db_change (int, default: 10): number of decibels to change the audio (positive values increase the
             sound level)
-        use_part_numbers_only (bool, default: False): if True, use only "part 1", "part 2", etc. as the
+        use_part_numbers_only (bool, default: True): if True, use only "part 1", "part 2", etc. as the
             start audio text instead of the full filename
+        progress_callback (callable, default: None): optional callback function that receives
+            (current_chunk, total_chunks, status_message) to report progress
+        speed (float, default: 1.0): playback speed multiplier (e.g., 1.5 = 50% faster)
     Returns:
         output_path (Path): path to the processed podcast episode
     """
-
-    stem = Path(filepath).stem
-    output_folder = Path(filepath).parent / stem
+    filepath = Path(filepath)
+    stem = filepath.stem
+    output_folder = filepath.parent / stem
 
     if not output_folder.exists():
         output_folder.mkdir(parents=True, exist_ok=True)
 
-    chunk_filenames = split_podcast(
-        filepaths=[filepath],
-        output_folder_path=output_folder,
-        split_length=split_length,
-    )
+    # Report loading status
+    if progress_callback:
+        progress_callback(0, 1, "Loading audio file...")
 
-    # Create text mapping if using part numbers only
-    start_audio_text_map = None
-    if use_part_numbers_only:
-        start_audio_text_map = {}
-        for i, chunk_filename in enumerate(chunk_filenames, start=1):
-            start_audio_text_map[chunk_filename] = f"part {i}"
+    # Load the full podcast once
+    pod = AudioSegment.from_mp3(filepath)
 
-    process_podcast_folder(
-        folder_path=output_folder,
-        output_folder_path=output_folder,
-        db_change=db_change,
-        start_audio_text_map=start_audio_text_map,
-    )
+    # Apply volume adjustment to the entire file (more efficient than per-chunk)
+    if db_change:
+        if progress_callback:
+            progress_callback(0, 1, "Adjusting volume...")
+        pod = pod + db_change
+
+    # Apply speed adjustment to the entire file
+    if speed != 1.0:
+        if progress_callback:
+            progress_callback(0, 1, "Adjusting playback speed...")
+        pod = change_speed(pod, speed)
+
+    # Calculate split parameters
+    split_ms = split_length * 60000  # Convert minutes to milliseconds
+    total_length = len(pod)
+    num_chunks = (total_length // split_ms) + (1 if total_length % split_ms else 0)
+
+    # Process each chunk in memory and export directly
+    for i in range(num_chunks):
+        if progress_callback:
+            progress_callback(i, num_chunks, f"Processing chunk {i + 1} of {num_chunks}...")
+
+        start_time = i * split_ms
+        end_time = min((i + 1) * split_ms, total_length)
+
+        # Extract chunk (already has volume adjusted)
+        chunk = pod[start_time:end_time]
+
+        # Generate intro audio
+        if use_part_numbers_only:
+            intro_text = f"part {i + 1}"
+        else:
+            intro_text = stem.replace("_", " ")
+
+        intro = _generate_intro_audio(intro_text)
+
+        # Combine intro + chunk
+        final_chunk = intro + chunk
+
+        # Export directly (single disk write per chunk)
+        output_filename = f"louder_{stem}_part{i + 1:02d}.mp3"
+        final_chunk.export(output_folder / output_filename)
+
+    if progress_callback:
+        progress_callback(num_chunks, num_chunks, "Complete!")
 
     return output_folder

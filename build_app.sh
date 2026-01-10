@@ -6,6 +6,7 @@
 #
 # Prerequisites:
 #   - Python 3.9+
+#   - rubberband CLI tool: brew install rubberband
 #   - Run this from the project root directory
 #
 # Usage:
@@ -25,26 +26,41 @@ if [ ! -f "setup.py" ]; then
     exit 1
 fi
 
+# Check for rubberband
+if ! command -v rubberband &> /dev/null; then
+    echo "Error: rubberband is not installed."
+    echo "Install with: brew install rubberband"
+    exit 1
+fi
+
+# Collect rubberband binaries
+echo "1. Collecting rubberband binaries..."
+cd app
+chmod +x collect_binaries.sh
+./collect_binaries.sh
+cd ..
+
 # Create a virtual environment for building (to avoid polluting your main env)
-echo "1. Creating build virtual environment..."
+echo ""
+echo "2. Creating build virtual environment..."
 python3 -m venv build_venv
 source build_venv/bin/activate
 
 # Install dependencies
 echo ""
-echo "2. Installing dependencies..."
+echo "3. Installing dependencies..."
 pip install --upgrade pip
 pip install pyinstaller
-pip install streamlit pydub gTTS static-ffmpeg
+pip install streamlit pydub gTTS static-ffmpeg pyrubberband numpy
 
 # Pre-download ffmpeg binaries so they're available
 echo ""
-echo "3. Pre-downloading ffmpeg binaries..."
+echo "4. Pre-downloading ffmpeg binaries..."
 python -c "import static_ffmpeg; static_ffmpeg.add_paths(); print('ffmpeg ready')"
 
 # Build the app
 echo ""
-echo "4. Building the application..."
+echo "5. Building the application..."
 cd app
 pyinstaller AudioTools.spec --clean --noconfirm
 

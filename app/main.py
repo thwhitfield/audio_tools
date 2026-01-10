@@ -83,6 +83,52 @@ def export_audio_to_bytes(audio_segment) -> bytes:
     return buffer.getvalue()
 
 
+def estimate_processing_time(file_size_mb, speed=1.0, num_chunks=1):
+    """Estimate processing time based on file size and settings.
+
+    Based on empirical testing (14.5MB file, 2 chunks, speed 1.3x = 12.9 seconds):
+    - Base processing: ~0.5 seconds per MB for loading, volume, splitting, exporting
+    - Speed adjustment adds time: ~0.3 seconds per MB (pyrubberband)
+    - Per-chunk overhead: ~2 seconds per chunk for gTTS intro generation
+
+    Args:
+        file_size_mb: Size of the input file in megabytes
+        speed: Playback speed setting (1.0 = no speed change)
+        num_chunks: Number of chunks the file will be split into
+
+    Returns:
+        Estimated processing time in seconds
+    """
+    # Base time for loading, processing, and exporting
+    base_time = file_size_mb * 0.5
+
+    # Speed adjustment adds some overhead
+    if speed != 1.0:
+        base_time += file_size_mb * 0.3
+
+    # Per-chunk overhead for gTTS intro generation (requires network call)
+    chunk_overhead = num_chunks * 2
+
+    return base_time + chunk_overhead
+
+
+def format_time(seconds, prefix="~"):
+    """Format seconds into a human-readable string with units.
+
+    Args:
+        seconds: Time in seconds
+        prefix: Optional prefix (default "~" for estimates, "" for elapsed)
+
+    Returns:
+        Formatted string like "~15s", "~1m 30s", or "1m 05s"
+    """
+    minutes = int(seconds // 60)
+    remaining_seconds = int(seconds % 60)
+    if minutes == 0:
+        return f"{prefix}{remaining_seconds}s"
+    return f"{prefix}{minutes}m {remaining_seconds:02d}s"
+
+
 # =============================================================================
 # Full Process (Split + Process)
 # =============================================================================
@@ -142,6 +188,16 @@ if mode == "Full Process (Split + Process)":
     if uploaded_file is not None:
         st.audio(uploaded_file, format="audio/mp3")
 
+        # Estimate processing time based on file size and settings
+        file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+        # Estimate audio duration: ~1 MB per minute for typical MP3 at 128kbps
+        estimated_duration_min = file_size_mb * 1.0
+        # After speed adjustment, duration changes
+        adjusted_duration_min = estimated_duration_min / speed if speed != 1.0 else estimated_duration_min
+        estimated_chunks = max(1, int(adjusted_duration_min / split_length) + 1)
+        estimated_time = estimate_processing_time(file_size_mb, speed, estimated_chunks)
+        st.info(f"Estimated processing time: {format_time(estimated_time)} ({estimated_chunks} chunks)")
+
         if st.button("Process File", type="primary", key="full_process_btn"):
             start_time = time.time()
             chunk_times = []  # Track time per chunk for estimation
@@ -175,12 +231,12 @@ if mode == "Full Process (Split + Process)":
                         avg_chunk_time = sum(chunk_times) / len(chunk_times)
                         remaining_chunks = total - current
                         eta_seconds = remaining_chunks * avg_chunk_time
-                        eta_str = f" | ETA: {eta_seconds:.0f}s"
+                        eta_str = f" | ETA: {format_time(eta_seconds, prefix='')}"
                     else:
                         eta_str = ""
 
                     # Format elapsed time
-                    elapsed_str = f"Elapsed: {elapsed:.0f}s"
+                    elapsed_str = f"Elapsed: {format_time(elapsed, prefix='')}"
 
                     if total > 0:
                         progress_bar.progress(current / total)
@@ -199,7 +255,7 @@ if mode == "Full Process (Split + Process)":
 
                     # Update progress for zip creation
                     elapsed = time.time() - start_time
-                    status_text.text(f"Creating ZIP file... | Elapsed: {elapsed:.0f}s")
+                    status_text.text(f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}")
 
                     # Create zip file of all processed chunks
                     zip_buffer = BytesIO()
@@ -219,7 +275,7 @@ if mode == "Full Process (Split + Process)":
                     processed_files = sorted(output_folder.glob("louder_*.mp3"))
                     num_files = len(processed_files)
                     elapsed_time = time.time() - start_time
-                    st.success(f"Processing complete! Created {num_files} chunks in {elapsed_time:.1f} seconds.")
+                    st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
 
                     # Preview first chunk
                     if processed_files:
@@ -286,6 +342,11 @@ elif mode == "Single File":
     if uploaded_file is not None:
         st.audio(uploaded_file, format="audio/mp3")
 
+        # Estimate processing time based on file size and settings
+        file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+        estimated_time = estimate_processing_time(file_size_mb, speed, num_chunks=1)
+        st.info(f"Estimated processing time: {format_time(estimated_time)}")
+
         if st.button("Process File", type="primary"):
             with st.spinner("Processing audio..."):
                 start_time = time.time()
@@ -310,7 +371,7 @@ elif mode == "Single File":
                     audio_bytes = export_audio_to_bytes(processed_audio)
 
                     elapsed_time = time.time() - start_time
-                    st.success(f"Processing complete! Took {elapsed_time:.1f} seconds.")
+                    st.success(f"Processing complete! Took {format_time(elapsed_time, prefix='')}.")
 
                     # Preview processed audio
                     st.markdown("**Preview processed audio:**")
@@ -384,6 +445,11 @@ elif mode == "Batch Process Folder":
         for f in uploaded_files:
             st.markdown(f"- {f.name}")
 
+        # Estimate processing time based on total file size and settings
+        total_size_mb = sum(len(f.getvalue()) for f in uploaded_files) / (1024 * 1024)
+        estimated_time = estimate_processing_time(total_size_mb, speed, num_chunks=len(uploaded_files))
+        st.info(f"Estimated processing time: {format_time(estimated_time)}")
+
         if st.button("Process All Files", type="primary", key="batch_btn"):
             with st.spinner(f"Processing {len(uploaded_files)} files..."):
                 start_time = time.time()
@@ -421,7 +487,7 @@ elif mode == "Batch Process Folder":
 
                         num_processed = len(list(output_dir.glob("*.mp3")))
                         elapsed_time = time.time() - start_time
-                        st.success(f"Processing complete! Processed {num_processed} files in {elapsed_time:.1f} seconds.")
+                        st.success(f"Processing complete! Processed {num_processed} files in {format_time(elapsed_time, prefix='')}.")
 
                         st.download_button(
                             label="Download All Processed Files (ZIP)",

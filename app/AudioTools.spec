@@ -15,6 +15,10 @@ block_cipher = None
 app_dir = Path(SPECPATH)
 project_root = app_dir.parent
 
+# Check for icon file
+icon_path = app_dir / 'icon.icns'
+icon_file = str(icon_path) if icon_path.exists() else None
+
 # Collect rubberband binaries
 binaries_dir = app_dir / 'binaries'
 rubberband_binaries = []
@@ -92,7 +96,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='Audio Tools.app',
-    icon=None,  # Add icon path here if you have one: 'icon.icns'
+    icon=icon_file,
     bundle_identifier='com.audiotools.app',
     info_plist={
         'CFBundleShortVersionString': '1.0.0',

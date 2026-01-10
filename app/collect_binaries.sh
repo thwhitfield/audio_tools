@@ -5,6 +5,11 @@
 set -e
 
 BINARIES_DIR="$(dirname "$0")/binaries"
+
+# Remove existing binaries directory to avoid permission issues with read-only files
+if [ -d "$BINARIES_DIR" ]; then
+    rm -rf "$BINARIES_DIR"
+fi
 mkdir -p "$BINARIES_DIR"
 
 echo "Collecting rubberband and dependencies..."

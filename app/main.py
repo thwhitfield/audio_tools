@@ -400,10 +400,17 @@ elif mode == "Single File":
                     raise ProcessingCancelled("Processing cancelled by user")
 
                 # Process the file
+                # Use custom intro if specified, otherwise use the original filename
+                if use_custom_intro and custom_intro:
+                    intro_text = custom_intro
+                else:
+                    # Convert filename to spoken text (remove extension, replace underscores)
+                    intro_text = Path(uploaded_file.name).stem.replace("_", " ")
+
                 processed_audio = process_pod(
                     filepath=tmp_path,
                     db_change=db_change if db_change != 0 else None,
-                    start_audio_text=custom_intro if use_custom_intro else None,
+                    start_audio_text=intro_text,
                     speed=speed,
                 )
 

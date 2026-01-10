@@ -92,7 +92,7 @@ if mode == "Single File":
 
     uploaded_file = st.file_uploader("Upload MP3 file", type=["mp3"])
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         db_change = st.slider(
@@ -104,6 +104,17 @@ if mode == "Single File":
         )
 
     with col2:
+        speed = st.slider(
+            "Playback Speed",
+            min_value=0.5,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
+            key="single_file_speed",
+            help="1.0 = normal, 1.5 = 50% faster, 0.75 = 25% slower",
+        )
+
+    with col3:
         use_custom_intro = st.checkbox("Use custom intro text")
         if use_custom_intro:
             custom_intro = st.text_input(
@@ -133,6 +144,7 @@ if mode == "Single File":
                         filepath=tmp_path,
                         db_change=db_change if db_change != 0 else None,
                         start_audio_text=custom_intro if use_custom_intro else None,
+                        speed=speed,
                     )
 
                     # Convert to bytes for download
@@ -326,7 +338,7 @@ elif mode == "Batch Process Folder":
         "Upload MP3 files", type=["mp3"], accept_multiple_files=True
     )
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         db_change = st.slider(
@@ -339,6 +351,17 @@ elif mode == "Batch Process Folder":
         )
 
     with col2:
+        speed = st.slider(
+            "Playback Speed",
+            min_value=0.5,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
+            key="batch_speed",
+            help="1.0 = normal, 1.5 = 50% faster, 0.75 = 25% slower",
+        )
+
+    with col3:
         prefix = st.text_input(
             "Output filename prefix",
             value="louder_",
@@ -372,6 +395,7 @@ elif mode == "Batch Process Folder":
                             output_folder_path=output_dir,
                             db_change=db_change,
                             prefix=prefix,
+                            speed=speed,
                         )
 
                         # Create zip of all processed files

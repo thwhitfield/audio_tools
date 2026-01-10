@@ -9,7 +9,7 @@ from pydub import AudioSegment
 # import click
 
 
-def process_pod(filepath, db_change=None, start_audio_text=None):
+def process_pod(filepath, db_change=None, start_audio_text=None, speed=1.0):
     """Process podcast file to add audio saying the name of the file to the beginning of the
     audio file, and to change the overall sound level if necessary.
 
@@ -17,6 +17,8 @@ def process_pod(filepath, db_change=None, start_audio_text=None):
         filepath (str, path): filepath of the podcast audio mp3 to be processed
         db_change (int, default: None): number of decibels to change the audio (positive values increase the
             sound level)
+        start_audio_text (str, default: None): custom text for the spoken intro
+        speed (float, default: 1.0): playback speed multiplier (e.g., 1.5 = 50% faster)
 
     Returns:
         pod2 (AudioSegment): processed audio object
@@ -29,6 +31,9 @@ def process_pod(filepath, db_change=None, start_audio_text=None):
 
     if db_change:
         pod = pod + db_change
+
+    if speed != 1.0:
+        pod = change_speed(pod, speed)
 
     # Replace underscores with spaces so that the audio pronounces individual words
     if start_audio_text is None:
@@ -66,6 +71,7 @@ def process_podcast_folder(
     prefix="louder_",
     suffix=None,
     start_audio_text_map=None,
+    speed=1.0,
 ):
     """Process each of the files in a folder.
 
@@ -79,6 +85,7 @@ def process_podcast_folder(
         prefix (str, default: 'louder_'): prefix to add to the output filenames
         suffix (str, default: None): suffix to add to the output filenames
         start_audio_text_map (dict, default: None): dictionary mapping filenames to custom start audio text
+        speed (float, default: 1.0): playback speed multiplier (e.g., 1.5 = 50% faster)
 
     Returns:
         None
@@ -108,6 +115,7 @@ def process_podcast_folder(
                 filepath=Path(folder_path) / filename,
                 db_change=db_change,
                 start_audio_text=start_audio_text,
+                speed=speed,
             )
 
             # Save processed pod file to output path

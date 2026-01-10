@@ -208,6 +208,7 @@ elif mode == "Full Process (Split + Process)":
 
         if st.button("Process File", type="primary", key="full_process_btn"):
             start_time = time.time()
+            chunk_times = []  # Track time per chunk for estimation
 
             # Create progress bar and status text
             progress_bar = st.progress(0)
@@ -221,10 +222,33 @@ elif mode == "Full Process (Split + Process)":
                 input_path = tmp_dir / uploaded_file.name
                 input_path.write_bytes(uploaded_file.getvalue())
 
+                last_chunk_time = [start_time]  # Use list to allow mutation in nested function
+
                 def update_progress(current, total, message):
+                    now = time.time()
+                    elapsed = now - start_time
+
+                    # Track chunk processing times
+                    if current > 0 and total > 1:
+                        chunk_time = now - last_chunk_time[0]
+                        chunk_times.append(chunk_time)
+                        last_chunk_time[0] = now
+
+                    # Calculate ETA
+                    if current > 0 and total > 0 and chunk_times:
+                        avg_chunk_time = sum(chunk_times) / len(chunk_times)
+                        remaining_chunks = total - current
+                        eta_seconds = remaining_chunks * avg_chunk_time
+                        eta_str = f" | ETA: {eta_seconds:.0f}s"
+                    else:
+                        eta_str = ""
+
+                    # Format elapsed time
+                    elapsed_str = f"Elapsed: {elapsed:.0f}s"
+
                     if total > 0:
                         progress_bar.progress(current / total)
-                    status_text.text(message)
+                    status_text.text(f"{message} | {elapsed_str}{eta_str}")
 
                 try:
                     # Run full processing with progress callback
@@ -237,7 +261,8 @@ elif mode == "Full Process (Split + Process)":
                     )
 
                     # Update progress for zip creation
-                    status_text.text("Creating ZIP file...")
+                    elapsed = time.time() - start_time
+                    status_text.text(f"Creating ZIP file... | Elapsed: {elapsed:.0f}s")
 
                     # Create zip file of all processed chunks
                     zip_buffer = BytesIO()

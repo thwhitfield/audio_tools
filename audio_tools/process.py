@@ -176,6 +176,32 @@ def _generate_intro_audio(text):
     return AudioSegment.from_mp3(audio_file)
 
 
+def _get_rubberband_path():
+    """Get the path to the rubberband binary, handling bundled apps."""
+    import sys
+    import shutil
+
+    # Check if we're running in a PyInstaller bundle
+    if getattr(sys, "frozen", False):
+        # Running as bundled app - PyInstaller puts binaries in _MEIPASS/bin
+        bundle_dir = Path(sys._MEIPASS)
+        bundled_rb = bundle_dir / "bin" / "rubberband"
+        if bundled_rb.exists():
+            # Also need to set DYLD_LIBRARY_PATH for the dylibs
+            bin_dir = str(bundle_dir / "bin")
+            current_path = os.environ.get("DYLD_LIBRARY_PATH", "")
+            if bin_dir not in current_path:
+                os.environ["DYLD_LIBRARY_PATH"] = f"{bin_dir}:{current_path}" if current_path else bin_dir
+            return str(bundled_rb)
+
+    # Fall back to system rubberband
+    system_rb = shutil.which("rubberband")
+    if system_rb:
+        return system_rb
+
+    return None
+
+
 def change_speed(audio_segment, speed=1.0):
     """Change the playback speed of an audio segment while preserving pitch.
 
@@ -199,6 +225,18 @@ def change_speed(audio_segment, speed=1.0):
             "Install with: pip install pyrubberband\n"
             "Also requires rubberband CLI tool: brew install rubberband (macOS)"
         )
+
+    # Set the rubberband path for pyrubberband to use
+    rb_path = _get_rubberband_path()
+    if rb_path is None:
+        raise RuntimeError(
+            "rubberband binary not found. "
+            "Install with: brew install rubberband (macOS)"
+        )
+
+    # Tell pyrubberband where to find rubberband
+    # pyrubberband uses __RUBBERBAND_UTIL environment variable
+    os.environ["__RUBBERBAND_UTIL"] = rb_path
 
     # Convert AudioSegment to numpy array
     samples = np.array(audio_segment.get_array_of_samples())

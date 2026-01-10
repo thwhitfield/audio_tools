@@ -8,4 +8,5 @@ data/
 build_venv/
 app/build/
 app/dist/
+app/binaries/
 *.spec.bak

@@ -5,6 +5,7 @@ PyInstaller spec file for Audio Tools Streamlit app.
 Build with: pyinstaller AudioTools.spec --clean
 """
 
+import glob
 import sys
 from pathlib import Path
 
@@ -14,10 +15,19 @@ block_cipher = None
 app_dir = Path(SPECPATH)
 project_root = app_dir.parent
 
+# Collect rubberband binaries
+binaries_dir = app_dir / 'binaries'
+rubberband_binaries = []
+if binaries_dir.exists():
+    for binary in binaries_dir.glob('*'):
+        if binary.is_file():
+            # Put all binaries in a 'bin' subdirectory
+            rubberband_binaries.append((str(binary), 'bin'))
+
 a = Analysis(
     ['run_app.py'],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=rubberband_binaries,
     datas=[
         # Include the main streamlit app
         ('main.py', '.'),
@@ -34,6 +44,8 @@ a = Analysis(
         'audio_tools',
         'audio_tools.process',
         'static_ffmpeg',
+        'pyrubberband',
+        'numpy',
     ],
     hookspath=['hooks'],
     hooksconfig={},

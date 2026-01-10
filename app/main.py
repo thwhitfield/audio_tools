@@ -176,7 +176,7 @@ elif mode == "Full Process (Split + Process)":
 
     uploaded_file = st.file_uploader("Upload MP3 file", type=["mp3"])
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         split_length = st.slider(
@@ -195,6 +195,17 @@ elif mode == "Full Process (Split + Process)":
             value=10,
             key="full_process_db",
             help="Positive values increase volume",
+        )
+
+    with col3:
+        speed = st.slider(
+            "Playback Speed",
+            min_value=0.5,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
+            key="full_process_speed",
+            help="1.0 = normal, 1.5 = 50% faster, 0.75 = 25% slower",
         )
 
     use_part_numbers = st.checkbox(
@@ -258,6 +269,7 @@ elif mode == "Full Process (Split + Process)":
                         split_length=split_length,
                         use_part_numbers_only=use_part_numbers,
                         progress_callback=update_progress,
+                        speed=speed,
                     )
 
                     # Update progress for zip creation

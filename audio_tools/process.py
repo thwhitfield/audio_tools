@@ -2,6 +2,7 @@ import os
 from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 from gtts import gTTS
 from pydub import AudioSegment
 
@@ -175,12 +176,63 @@ def _generate_intro_audio(text):
     return AudioSegment.from_mp3(audio_file)
 
 
+def change_speed(audio_segment, speed=1.0):
+    """Change the playback speed of an audio segment while preserving pitch.
+
+    Uses pyrubberband for high-quality time-stretching that doesn't affect pitch.
+
+    Args:
+        audio_segment (AudioSegment): the audio to modify
+        speed (float, default: 1.0): speed multiplier (e.g., 1.5 = 50% faster, 0.75 = 25% slower)
+
+    Returns:
+        AudioSegment: audio with adjusted speed
+    """
+    if speed == 1.0:
+        return audio_segment
+
+    try:
+        import pyrubberband as pyrb
+    except ImportError:
+        raise ImportError(
+            "pyrubberband is required for speed adjustment. "
+            "Install with: pip install pyrubberband\n"
+            "Also requires rubberband CLI tool: brew install rubberband (macOS)"
+        )
+
+    # Convert AudioSegment to numpy array
+    samples = np.array(audio_segment.get_array_of_samples())
+    sample_rate = audio_segment.frame_rate
+
+    # Handle stereo audio
+    if audio_segment.channels == 2:
+        samples = samples.reshape((-1, 2))
+
+    # Convert to float for pyrubberband (expects float64 in range [-1, 1])
+    samples_float = samples.astype(np.float64) / (2**15)
+
+    # Time stretch (rate > 1 = faster, rate < 1 = slower)
+    stretched = pyrb.time_stretch(samples_float, sample_rate, speed)
+
+    # Convert back to int16
+    stretched_int = (stretched * (2**15)).astype(np.int16)
+
+    # Convert back to AudioSegment
+    return AudioSegment(
+        stretched_int.tobytes(),
+        frame_rate=sample_rate,
+        sample_width=2,  # 16-bit = 2 bytes
+        channels=audio_segment.channels,
+    )
+
+
 def full_process_podcast_episode(
     filepath,
     db_change=10,
     split_length=10,
     use_part_numbers_only=True,
     progress_callback=None,
+    speed=1.0,
 ):
     """Fully process a podcast episode by adjusting sound level and adding filename audio.
 
@@ -195,6 +247,7 @@ def full_process_podcast_episode(
             start audio text instead of the full filename
         progress_callback (callable, default: None): optional callback function that receives
             (current_chunk, total_chunks, status_message) to report progress
+        speed (float, default: 1.0): playback speed multiplier (e.g., 1.5 = 50% faster)
     Returns:
         output_path (Path): path to the processed podcast episode
     """
@@ -217,6 +270,12 @@ def full_process_podcast_episode(
         if progress_callback:
             progress_callback(0, 1, "Adjusting volume...")
         pod = pod + db_change
+
+    # Apply speed adjustment to the entire file
+    if speed != 1.0:
+        if progress_callback:
+            progress_callback(0, 1, "Adjusting playback speed...")
+        pod = change_speed(pod, speed)
 
     # Calculate split parameters
     split_ms = split_length * 60000  # Convert minutes to milliseconds

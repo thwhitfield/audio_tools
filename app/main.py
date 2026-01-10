@@ -83,35 +83,25 @@ class ProcessingCancelled(Exception):
     pass
 
 
-# Mode options - combined landing page first, then other tools
-ALL_MODES = ["Process Podcast", "Single File (No Split)", "Batch Process Folder"]
+# Mode options - About first as landing page
+ALL_MODES = ["About", "Process Podcast", "Single File (No Split)", "Batch Process Folder"]
 
-# Initialize default mode
-if "selected_mode" not in st.session_state:
-    st.session_state.selected_mode = "Process Podcast"
+# Initialize the radio key if not present
+if "mode_radio" not in st.session_state:
+    st.session_state.mode_radio = "About"
 
-# Check for pending mode switch (set by download_and_store_episode)
-# This must be checked BEFORE the radio widgets are rendered
-if "pending_mode_switch" in st.session_state and st.session_state.pending_mode_switch is not None:
-    st.session_state.selected_mode = st.session_state.pending_mode_switch
-    st.session_state.pending_mode_switch = None
-
-# Sidebar for mode selection
+# Sidebar for mode selection - key binds directly to session state
 mode = st.sidebar.radio(
     "Mode",
     ALL_MODES,
-    index=ALL_MODES.index(st.session_state.selected_mode),
-    captions=["Search or upload podcasts", None, None],
+    captions=["Welcome & help", "Search or upload podcasts", None, None],
+    key="mode_radio",
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### About")
 st.sidebar.markdown(
     """
-This tool helps you:
-- Add spoken intros to audio files
-- Boost volume for better playback
-- Split long podcasts into chunks
+*Optimized for [Shokz OpenSwim](https://shokz.com/products/openswim) MP3 players*
 """
 )
 
@@ -171,9 +161,97 @@ def format_time(seconds, prefix="~"):
 
 
 # =============================================================================
+# About (Landing Page)
+# =============================================================================
+if mode == "About":
+    st.header("Welcome to Audio Tools")
+
+    # Callback functions for mode switching
+    def switch_to_process_podcast():
+        st.session_state.mode_radio = "Process Podcast"
+
+    def switch_to_single_file():
+        st.session_state.mode_radio = "Single File (No Split)"
+
+    def switch_to_batch_process():
+        st.session_state.mode_radio = "Batch Process Folder"
+
+    # Mode selection at top
+    st.markdown("### Choose a Mode")
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.button("Process Podcast", type="primary", use_container_width=True, on_click=switch_to_process_podcast)
+    with col2:
+        st.markdown("Search for podcasts online or upload local MP3 files. Split long episodes into chunks with spoken intros.")
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.button("Single File", use_container_width=True, on_click=switch_to_single_file)
+    with col2:
+        st.markdown("Process a single file without splitting. Add intro and adjust volume.")
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.button("Batch Process", use_container_width=True, on_click=switch_to_batch_process)
+    with col2:
+        st.markdown("Process multiple files at once with the same settings.")
+
+    st.markdown("---")
+
+    st.markdown("""
+## What is Audio Tools?
+
+Audio Tools is designed to make podcast episodes easier to listen to on **Shokz OpenSwim**
+bone conduction MP3 players (and similar devices). These players are great for swimming
+and workouts, but they have limitations:
+
+- **No screen** to see track names or progress
+- **Limited controls** make navigation difficult
+- **Lower volume** compared to regular headphones
+
+This tool solves these problems by processing your audio files.
+
+---
+
+## Key Features
+
+### Spoken Intros
+Each audio chunk gets a **text-to-speech intro** announcing which part you're listening to
+(e.g., "Part 1", "Part 2"). This way you always know where you are in a long episode
+without needing to look at a screen.
+
+### Volume Boost
+Increase the volume of your audio files by up to **+30 dB** for better clarity during
+workouts or in noisy environments like pools.
+
+### Smart Splitting
+Long podcasts (1-3+ hours) are split into **smaller chunks** (default: 10 minutes each).
+This makes it easier to:
+- Resume where you left off
+- Skip forward/backward by track
+- Manage your listening sessions
+
+### Speed Adjustment
+Speed up or slow down playback from **0.5x to 2.0x**. Great for:
+- Getting through content faster (1.25x - 1.5x is popular)
+- Slowing down dense educational content
+
+---
+
+## Tips
+
+- **Start with default settings** and adjust based on your experience
+- **10 dB volume boost** works well for most podcasts
+- **1.25x speed** is a good starting point if you want to listen faster
+- **10-minute chunks** balance convenience with not having too many files
+    """)
+
+
+# =============================================================================
 # Process Podcast (Combined Landing Page)
 # =============================================================================
-if mode == "Process Podcast":
+elif mode == "Process Podcast":
     st.header("Process Podcast")
     st.markdown(
         """

@@ -79,12 +79,12 @@ def search_episodes(query: str, limit: int = 25) -> list[dict]:
     return episodes
 
 
-def get_podcast_episodes(feed_url: str, limit: int = 50) -> list[dict]:
+def get_podcast_episodes(feed_url: str, limit: int | None = None) -> list[dict]:
     """Fetch episodes from a podcast RSS feed.
 
     Args:
         feed_url: URL of the podcast RSS feed
-        limit: Maximum number of episodes to return (default: 50)
+        limit: Maximum number of episodes to return (default: None = all episodes)
 
     Returns:
         List of episode dictionaries with keys: title, audio_url, duration,
@@ -92,8 +92,9 @@ def get_podcast_episodes(feed_url: str, limit: int = 50) -> list[dict]:
     """
     feed = feedparser.parse(feed_url)
 
+    entries = feed.entries[:limit] if limit else feed.entries
     episodes = []
-    for entry in feed.entries[:limit]:
+    for entry in entries:
         audio_url = None
         duration = None
 

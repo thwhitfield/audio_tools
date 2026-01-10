@@ -186,6 +186,14 @@ if mode == "Process Podcast":
         st.session_state.selected_podcast = None
     if "podcast_episodes" not in st.session_state:
         st.session_state.podcast_episodes = None
+    if "episodes_per_page" not in st.session_state:
+        st.session_state.episodes_per_page = 25
+    if "feed_episode_page" not in st.session_state:
+        st.session_state.feed_episode_page = 0
+    if "search_episode_page" not in st.session_state:
+        st.session_state.search_episode_page = 0
+    if "cached_episode_search" not in st.session_state:
+        st.session_state.cached_episode_search = {"query": None, "results": []}
 
     def download_and_store_episode(audio_url: str, title: str):
         """Download an episode and store it in session state for processing."""
@@ -272,18 +280,56 @@ if mode == "Process Podcast":
                         st.info("No podcasts found. Try a different search term.")
 
                 else:  # Episodes
-                    # Search for episodes directly
-                    with st.spinner("Searching episodes..."):
-                        try:
-                            episodes = search_episodes(search_query)
-                        except Exception as e:
-                            st.error(f"Error searching episodes: {e}")
-                            episodes = []
+                    # Search for episodes directly (cache results for pagination)
+                    if st.session_state.cached_episode_search["query"] != search_query:
+                        with st.spinner("Searching episodes..."):
+                            try:
+                                # Fetch more results for pagination (iTunes allows up to 200)
+                                episodes = search_episodes(search_query, limit=200)
+                                st.session_state.cached_episode_search = {
+                                    "query": search_query,
+                                    "results": episodes,
+                                }
+                                st.session_state.search_episode_page = 0
+                            except Exception as e:
+                                st.error(f"Error searching episodes: {e}")
+                                st.session_state.cached_episode_search = {
+                                    "query": search_query,
+                                    "results": [],
+                                }
+
+                    episodes = st.session_state.cached_episode_search["results"]
 
                     if episodes:
-                        st.markdown(f"**Found {len(episodes)} episodes:**")
+                        total_episodes = len(episodes)
+                        per_page = st.session_state.episodes_per_page
+                        total_pages = (total_episodes + per_page - 1) // per_page
+                        current_page = st.session_state.search_episode_page
 
-                        for episode in episodes:
+                        # Page size selector and page info
+                        ctrl_col1, ctrl_col2 = st.columns([1, 2])
+                        with ctrl_col1:
+                            new_per_page = st.selectbox(
+                                "Results per page",
+                                options=[10, 25, 50],
+                                index=[10, 25, 50].index(per_page),
+                                key="search_per_page_select",
+                            )
+                            if new_per_page != per_page:
+                                st.session_state.episodes_per_page = new_per_page
+                                st.session_state.search_episode_page = 0
+                                st.rerun()
+                        with ctrl_col2:
+                            start_idx = current_page * per_page + 1
+                            end_idx = min((current_page + 1) * per_page, total_episodes)
+                            st.markdown(f"**Showing {start_idx}-{end_idx} of {total_episodes} episodes**")
+
+                        # Get current page of episodes
+                        page_start = current_page * per_page
+                        page_end = page_start + per_page
+                        page_episodes = episodes[page_start:page_end]
+
+                        for episode in page_episodes:
                             col1, col2, col3 = st.columns([1, 3, 1])
 
                             with col1:
@@ -311,6 +357,22 @@ if mode == "Process Podcast":
                                                 st.error(f"Download failed: {e}")
 
                             st.markdown("---")
+
+                        # Previous/Next navigation buttons
+                        if total_pages > 1:
+                            nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+                            with nav_col1:
+                                if current_page > 0:
+                                    if st.button("← Previous", key="search_prev"):
+                                        st.session_state.search_episode_page -= 1
+                                        st.rerun()
+                            with nav_col2:
+                                st.markdown(f"<div style='text-align: center'>Page {current_page + 1} of {total_pages}</div>", unsafe_allow_html=True)
+                            with nav_col3:
+                                if current_page < total_pages - 1:
+                                    if st.button("Next →", key="search_next"):
+                                        st.session_state.search_episode_page += 1
+                                        st.rerun()
                     else:
                         st.info("No episodes found. Try a different search term.")
 
@@ -330,6 +392,7 @@ if mode == "Process Podcast":
                 if st.button("Back to search results"):
                     st.session_state.selected_podcast = None
                     st.session_state.podcast_episodes = None
+                    st.session_state.feed_episode_page = 0
                     st.rerun()
 
                 # Fetch episodes if not already loaded
@@ -339,39 +402,107 @@ if mode == "Process Podcast":
                             st.session_state.podcast_episodes = get_podcast_episodes(
                                 podcast["feed_url"]
                             )
+                            st.session_state.feed_episode_page = 0
                         except Exception as e:
                             st.error(f"Error loading episodes: {e}")
                             st.session_state.podcast_episodes = []
 
-                episodes = st.session_state.podcast_episodes
-                if episodes:
-                    st.markdown(f"**{len(episodes)} episodes:**")
+                all_episodes = st.session_state.podcast_episodes
+                if all_episodes:
+                    # Search within podcast episodes
+                    episode_filter = st.text_input(
+                        "Search within this podcast",
+                        placeholder="Filter episodes by title...",
+                        key="feed_episode_filter",
+                    )
 
-                    for i, episode in enumerate(episodes):
-                        col1, col2 = st.columns([4, 1])
+                    # Filter episodes if search term provided
+                    if episode_filter:
+                        filter_lower = episode_filter.lower()
+                        episodes = [
+                            ep for ep in all_episodes
+                            if filter_lower in ep.get("title", "").lower()
+                        ]
+                        # Reset to first page when filter changes
+                        if "last_feed_filter" not in st.session_state or st.session_state.last_feed_filter != episode_filter:
+                            st.session_state.feed_episode_page = 0
+                            st.session_state.last_feed_filter = episode_filter
+                    else:
+                        episodes = all_episodes
+                        st.session_state.last_feed_filter = ""
 
-                        with col1:
-                            st.markdown(f"**{episode['title']}**")
-                            duration = format_duration_str(episode.get("duration"))
-                            if duration:
-                                st.caption(f"Duration: {duration}")
-                            if episode.get("release_date"):
-                                st.caption(f"Released: {episode['release_date'][:10]}")
+                    total_episodes = len(episodes)
+                    per_page = st.session_state.episodes_per_page
+                    total_pages = max(1, (total_episodes + per_page - 1) // per_page)
+                    current_page = min(st.session_state.feed_episode_page, total_pages - 1)
 
-                        with col2:
-                            if episode.get("audio_url"):
-                                if st.button("Select", key=f"sel_feed_{i}", type="primary"):
-                                    with st.spinner("Downloading..."):
-                                        try:
-                                            download_and_store_episode(
-                                                episode["audio_url"],
-                                                episode["title"],
-                                            )
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"Download failed: {e}")
+                    if total_episodes > 0:
+                        # Page size selector and page info
+                        ctrl_col1, ctrl_col2 = st.columns([1, 2])
+                        with ctrl_col1:
+                            new_per_page = st.selectbox(
+                                "Results per page",
+                                options=[10, 25, 50],
+                                index=[10, 25, 50].index(per_page),
+                                key="feed_per_page_select",
+                            )
+                            if new_per_page != per_page:
+                                st.session_state.episodes_per_page = new_per_page
+                                st.session_state.feed_episode_page = 0
+                                st.rerun()
+                        with ctrl_col2:
+                            start_idx = current_page * per_page + 1
+                            end_idx = min((current_page + 1) * per_page, total_episodes)
+                            st.markdown(f"**Showing {start_idx}-{end_idx} of {total_episodes} episodes**")
 
-                        st.markdown("---")
+                        # Get current page of episodes
+                        page_start = current_page * per_page
+                        page_end = page_start + per_page
+                        page_episodes = episodes[page_start:page_end]
+
+                        for i, episode in enumerate(page_episodes):
+                            col1, col2 = st.columns([4, 1])
+
+                            with col1:
+                                st.markdown(f"**{episode['title']}**")
+                                duration = format_duration_str(episode.get("duration"))
+                                if duration:
+                                    st.caption(f"Duration: {duration}")
+                                if episode.get("release_date"):
+                                    st.caption(f"Released: {episode['release_date'][:10]}")
+
+                            with col2:
+                                if episode.get("audio_url"):
+                                    if st.button("Select", key=f"sel_feed_{page_start + i}", type="primary"):
+                                        with st.spinner("Downloading..."):
+                                            try:
+                                                download_and_store_episode(
+                                                    episode["audio_url"],
+                                                    episode["title"],
+                                                )
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Download failed: {e}")
+
+                            st.markdown("---")
+
+                        # Previous/Next navigation buttons
+                        if total_pages > 1:
+                            nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+                            with nav_col1:
+                                if current_page > 0:
+                                    if st.button("← Previous", key="feed_prev"):
+                                        st.session_state.feed_episode_page -= 1
+                                        st.rerun()
+                            with nav_col2:
+                                st.markdown(f"<div style='text-align: center'>Page {current_page + 1} of {total_pages}</div>", unsafe_allow_html=True)
+                            with nav_col3:
+                                if current_page < total_pages - 1:
+                                    if st.button("Next →", key="feed_next"):
+                                        st.session_state.feed_episode_page += 1
+                                        st.rerun()
+                    else:
+                        st.info("No episodes match your search.")
 
         with upload_tab:
             uploaded_file = st.file_uploader("Upload MP3 file", type=["mp3"], key="upload_local")

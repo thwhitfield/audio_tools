@@ -56,6 +56,21 @@ st.set_page_config(
 st.title("Audio Tools")
 st.markdown("Process podcast MP3 files for your Shokz OpenSwim player")
 
+# Initialize session state for cancellation
+if "cancel_requested" not in st.session_state:
+    st.session_state.cancel_requested = False
+
+
+def request_cancel():
+    """Callback to set the cancel flag."""
+    st.session_state.cancel_requested = True
+
+
+class ProcessingCancelled(Exception):
+    """Exception raised when processing is cancelled by user."""
+    pass
+
+
 # Sidebar for mode selection
 mode = st.sidebar.radio(
     "Processing Mode",
@@ -199,12 +214,16 @@ if mode == "Full Process (Split + Process)":
         st.info(f"Estimated processing time: {format_time(estimated_time)} ({estimated_chunks} chunks)")
 
         if st.button("Process File", type="primary", key="full_process_btn"):
+            # Reset cancel flag at start of processing
+            st.session_state.cancel_requested = False
+
             start_time = time.time()
             chunk_times = []  # Track time per chunk for estimation
 
-            # Create progress bar and status text
+            # Create progress bar, status text, and cancel button
             progress_bar = st.progress(0)
             status_text = st.empty()
+            cancel_button = st.button("Cancel", key="cancel_full_process", on_click=request_cancel)
 
             # Create temp directory for processing
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -217,6 +236,10 @@ if mode == "Full Process (Split + Process)":
                 last_chunk_time = [start_time]  # Use list to allow mutation in nested function
 
                 def update_progress(current, total, message):
+                    # Check for cancellation
+                    if st.session_state.cancel_requested:
+                        raise ProcessingCancelled("Processing cancelled by user")
+
                     now = time.time()
                     elapsed = now - start_time
 
@@ -292,6 +315,12 @@ if mode == "Full Process (Split + Process)":
                         mime="application/zip",
                     )
 
+                except ProcessingCancelled:
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.warning("Processing cancelled.")
+                    st.session_state.cancel_requested = False
+
                 except Exception as e:
                     progress_bar.empty()
                     status_text.empty()
@@ -348,50 +377,73 @@ elif mode == "Single File":
         st.info(f"Estimated processing time: {format_time(estimated_time)}")
 
         if st.button("Process File", type="primary"):
-            with st.spinner("Processing audio..."):
-                start_time = time.time()
+            # Reset cancel flag at start of processing
+            st.session_state.cancel_requested = False
 
-                # Save uploaded file to temp location
-                with tempfile.NamedTemporaryFile(
-                    suffix=".mp3", delete=False
-                ) as tmp_file:
-                    tmp_file.write(uploaded_file.getvalue())
-                    tmp_path = tmp_file.name
+            start_time = time.time()
 
-                try:
-                    # Process the file
-                    processed_audio = process_pod(
-                        filepath=tmp_path,
-                        db_change=db_change if db_change != 0 else None,
-                        start_audio_text=custom_intro if use_custom_intro else None,
-                        speed=speed,
-                    )
+            # Create status text and cancel button
+            status_text = st.empty()
+            status_text.text("Processing audio...")
+            cancel_button = st.button("Cancel", key="cancel_single_file", on_click=request_cancel)
 
-                    # Convert to bytes for download
-                    audio_bytes = export_audio_to_bytes(processed_audio)
+            # Save uploaded file to temp location
+            with tempfile.NamedTemporaryFile(
+                suffix=".mp3", delete=False
+            ) as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_path = tmp_file.name
 
-                    elapsed_time = time.time() - start_time
-                    st.success(f"Processing complete! Took {format_time(elapsed_time, prefix='')}.")
+            try:
+                # Check for cancellation before processing
+                if st.session_state.cancel_requested:
+                    raise ProcessingCancelled("Processing cancelled by user")
 
-                    # Preview processed audio
-                    st.markdown("**Preview processed audio:**")
-                    st.audio(audio_bytes, format="audio/mp3")
+                # Process the file
+                processed_audio = process_pod(
+                    filepath=tmp_path,
+                    db_change=db_change if db_change != 0 else None,
+                    start_audio_text=custom_intro if use_custom_intro else None,
+                    speed=speed,
+                )
 
-                    # Create download button
-                    output_filename = f"processed_{uploaded_file.name}"
-                    st.download_button(
-                        label="Download Processed File",
-                        data=audio_bytes,
-                        file_name=output_filename,
-                        mime="audio/mpeg",
-                    )
+                # Check for cancellation after processing
+                if st.session_state.cancel_requested:
+                    raise ProcessingCancelled("Processing cancelled by user")
 
-                except Exception as e:
-                    st.error(f"Error processing file: {e}")
+                # Convert to bytes for download
+                audio_bytes = export_audio_to_bytes(processed_audio)
 
-                finally:
-                    # Clean up temp file
-                    Path(tmp_path).unlink(missing_ok=True)
+                status_text.empty()
+
+                elapsed_time = time.time() - start_time
+                st.success(f"Processing complete! Took {format_time(elapsed_time, prefix='')}.")
+
+                # Preview processed audio
+                st.markdown("**Preview processed audio:**")
+                st.audio(audio_bytes, format="audio/mp3")
+
+                # Create download button
+                output_filename = f"processed_{uploaded_file.name}"
+                st.download_button(
+                    label="Download Processed File",
+                    data=audio_bytes,
+                    file_name=output_filename,
+                    mime="audio/mpeg",
+                )
+
+            except ProcessingCancelled:
+                status_text.empty()
+                st.warning("Processing cancelled.")
+                st.session_state.cancel_requested = False
+
+            except Exception as e:
+                status_text.empty()
+                st.error(f"Error processing file: {e}")
+
+            finally:
+                # Clean up temp file
+                Path(tmp_path).unlink(missing_ok=True)
 
 
 # =============================================================================
@@ -451,50 +503,93 @@ elif mode == "Batch Process Folder":
         st.info(f"Estimated processing time: {format_time(estimated_time)}")
 
         if st.button("Process All Files", type="primary", key="batch_btn"):
-            with st.spinner(f"Processing {len(uploaded_files)} files..."):
-                start_time = time.time()
+            # Reset cancel flag at start of processing
+            st.session_state.cancel_requested = False
 
-                # Create temp directory for processing
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    tmp_dir = Path(tmp_dir)
-                    output_dir = tmp_dir / "output"
-                    output_dir.mkdir()
+            start_time = time.time()
+            total_files = len(uploaded_files)
 
-                    # Save all uploaded files
-                    for uploaded_file in uploaded_files:
+            # Create progress bar, status text, and cancel button
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            cancel_button = st.button("Cancel", key="cancel_batch", on_click=request_cancel)
+
+            # Create temp directory for processing
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_dir = Path(tmp_dir)
+                output_dir = tmp_dir / "output"
+                output_dir.mkdir()
+
+                # Save all uploaded files
+                for uploaded_file in uploaded_files:
+                    input_path = tmp_dir / uploaded_file.name
+                    input_path.write_bytes(uploaded_file.getvalue())
+
+                try:
+                    # Process files one by one so we can check for cancellation
+                    processed_count = 0
+                    for i, uploaded_file in enumerate(uploaded_files):
+                        # Check for cancellation
+                        if st.session_state.cancel_requested:
+                            raise ProcessingCancelled("Processing cancelled by user")
+
+                        # Update progress
+                        elapsed = time.time() - start_time
+                        status_text.text(f"Processing {uploaded_file.name} ({i+1}/{total_files})... | Elapsed: {format_time(elapsed, prefix='')}")
+                        progress_bar.progress((i) / total_files)
+
+                        # Process the file
                         input_path = tmp_dir / uploaded_file.name
-                        input_path.write_bytes(uploaded_file.getvalue())
-
-                    try:
-                        # Process the folder
-                        process_podcast_folder(
-                            folder_path=tmp_dir,
-                            output_folder_path=output_dir,
+                        processed_audio = process_pod(
+                            filepath=input_path,
                             db_change=db_change,
-                            prefix=prefix,
                             speed=speed,
                         )
 
-                        # Create zip of all processed files
-                        zip_buffer = BytesIO()
-                        with zipfile.ZipFile(
-                            zip_buffer, "w", zipfile.ZIP_DEFLATED
-                        ) as zip_file:
-                            for mp3_file in output_dir.glob("*.mp3"):
-                                zip_file.write(mp3_file, mp3_file.name)
+                        # Save processed file
+                        output_filename = f"{prefix}{Path(uploaded_file.name).stem}.mp3"
+                        output_path = output_dir / output_filename
+                        processed_audio.export(output_path)
+                        processed_count += 1
 
-                        zip_buffer.seek(0)
+                    # Final progress update
+                    progress_bar.progress(1.0)
 
-                        num_processed = len(list(output_dir.glob("*.mp3")))
-                        elapsed_time = time.time() - start_time
-                        st.success(f"Processing complete! Processed {num_processed} files in {format_time(elapsed_time, prefix='')}.")
+                    # Create zip of all processed files
+                    elapsed = time.time() - start_time
+                    status_text.text(f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}")
 
-                        st.download_button(
-                            label="Download All Processed Files (ZIP)",
-                            data=zip_buffer.getvalue(),
-                            file_name="processed_podcasts.zip",
-                            mime="application/zip",
-                        )
+                    zip_buffer = BytesIO()
+                    with zipfile.ZipFile(
+                        zip_buffer, "w", zipfile.ZIP_DEFLATED
+                    ) as zip_file:
+                        for mp3_file in output_dir.glob("*.mp3"):
+                            zip_file.write(mp3_file, mp3_file.name)
 
-                    except Exception as e:
-                        st.error(f"Error processing files: {e}")
+                    zip_buffer.seek(0)
+
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    status_text.empty()
+
+                    num_processed = len(list(output_dir.glob("*.mp3")))
+                    elapsed_time = time.time() - start_time
+                    st.success(f"Processing complete! Processed {num_processed} files in {format_time(elapsed_time, prefix='')}.")
+
+                    st.download_button(
+                        label="Download All Processed Files (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name="processed_podcasts.zip",
+                        mime="application/zip",
+                    )
+
+                except ProcessingCancelled:
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.warning(f"Processing cancelled. {processed_count} of {total_files} files were processed.")
+                    st.session_state.cancel_requested = False
+
+                except Exception as e:
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.error(f"Error processing files: {e}")

@@ -51,7 +51,7 @@ echo ""
 echo "3. Installing dependencies..."
 pip install --upgrade pip
 pip install pyinstaller
-pip install streamlit pydub gTTS static-ffmpeg pyrubberband numpy
+pip install streamlit pydub gTTS static-ffmpeg pyrubberband numpy feedparser requests
 
 # Pre-download ffmpeg binaries so they're available
 echo ""

@@ -14,7 +14,9 @@ setuptools.setup(
     python_requires = '>=3.7',
     install_requires = [
         'pydub',
-        'gTTS'
+        'gTTS',
+        'feedparser',
+        'requests',
     ],
     entry_points = '''
     [console_scripts]

@@ -76,6 +76,7 @@ def search_episodes(query: str, limit: int = 25) -> list[dict]:
             "duration_ms": result.get("trackTimeMillis"),
             "artwork_url": result.get("artworkUrl160") or result.get("artworkUrl100"),
             "release_date": result.get("releaseDate"),
+            "description": result.get("description", ""),
         })
 
     return episodes

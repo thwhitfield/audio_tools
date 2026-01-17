@@ -88,6 +88,10 @@ if "file_for_processing" not in st.session_state:
 if "chapter_info" not in st.session_state:
     st.session_state.chapter_info = None
 
+# Initialize session state for episode description
+if "episode_description" not in st.session_state:
+    st.session_state.episode_description = None
+
 
 def request_cancel():
     """Callback to set the cancel flag."""
@@ -298,7 +302,12 @@ elif mode == "Process Podcast":
     if "cached_episode_search" not in st.session_state:
         st.session_state.cached_episode_search = {"query": None, "results": []}
 
-    def download_and_store_episode(audio_url: str, title: str, chapter_info: ChapterInfo | None = None):
+    def download_and_store_episode(
+        audio_url: str,
+        title: str,
+        chapter_info: ChapterInfo | None = None,
+        description: str | None = None,
+    ):
         """Download an episode and store it in session state for processing."""
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
             download_episode(audio_url, tmp_file.name)
@@ -318,6 +327,8 @@ elif mode == "Process Podcast":
         }
         # Store chapter info if available
         st.session_state.chapter_info = chapter_info
+        # Store episode description if available
+        st.session_state.episode_description = description
         # Clear search state
         st.session_state.selected_podcast = None
         st.session_state.podcast_episodes = None
@@ -329,6 +340,7 @@ elif mode == "Process Podcast":
         if st.button("Choose different file"):
             st.session_state.file_for_processing = None
             st.session_state.chapter_info = None
+            st.session_state.episode_description = None
             st.rerun()
     else:
         # Show file source options using tabs
@@ -457,10 +469,17 @@ elif mode == "Process Podcast":
                                                 download_and_store_episode(
                                                     episode["audio_url"],
                                                     episode["title"],
+                                                    description=episode.get("description"),
                                                 )
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(f"Download failed: {e}")
+
+                            # Show description expander if available
+                            ep_description = episode.get("description")
+                            if ep_description:
+                                with st.expander("📝 Description", expanded=False):
+                                    st.html(ep_description)
 
                             st.markdown("---")
 
@@ -591,10 +610,17 @@ elif mode == "Process Podcast":
                                                     episode["audio_url"],
                                                     episode["title"],
                                                     chapter_info=episode.get("chapters"),
+                                                    description=episode.get("description"),
                                                 )
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(f"Download failed: {e}")
+
+                            # Show description expander if available
+                            ep_description = episode.get("description")
+                            if ep_description:
+                                with st.expander("📝 Description", expanded=False):
+                                    st.html(ep_description)
 
                             st.markdown("---")
 
@@ -625,8 +651,9 @@ elif mode == "Process Podcast":
                     "filename": uploaded_file.name,
                 }
                 # For uploaded files, we'll try to extract chapters from the audio during processing
-                # Clear any existing chapter info (no RSS chapters for uploads)
+                # Clear any existing chapter info and description (no RSS data for uploads)
                 st.session_state.chapter_info = None
+                st.session_state.episode_description = None
                 st.rerun()
 
     # Only show processing options if we have a file
@@ -709,6 +736,13 @@ elif mode == "Process Podcast":
             with st.expander(f"📑 Preview Chapters ({len(chapter_info.chapters)} chapters)", expanded=False):
                 for i, ch in enumerate(chapter_info.chapters):
                     st.markdown(f"**{i + 1}. {ch.title}** — {ch.start_time_str()}")
+
+        # Episode description if available
+        episode_description = st.session_state.episode_description
+        if episode_description:
+            with st.expander("📝 Episode Description", expanded=False):
+                # Use unsafe_allow_html to render HTML content properly
+                st.html(episode_description)
 
         # TOC option (only show if chapters available)
         generate_toc = False
@@ -828,10 +862,11 @@ elif mode == "Process Podcast":
                     elapsed_time = time.time() - start_time
                     st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
 
-                    # Clear the file_for_processing and chapter_info after successful processing
+                    # Clear the file_for_processing, chapter_info, and description after successful processing
                     if st.session_state.file_for_processing:
                         st.session_state.file_for_processing = None
                     st.session_state.chapter_info = None
+                    st.session_state.episode_description = None
 
                     # Preview first chunk
                     if processed_files:

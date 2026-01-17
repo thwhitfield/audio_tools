@@ -140,6 +140,7 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
     - "(01:23:45) Chapter Title"
     - "00:00 - Chapter Title"
     - "[00:00] Chapter Title"
+    - "Chapter Title (00:00:00)" - timestamp after title
 
     Args:
         text: Description or show notes text that may contain chapters
@@ -147,16 +148,27 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
     Returns:
         List of Chapter objects extracted from the text
     """
-    chapters = []
+    chapters_ts_first = []
+    chapters_ts_last = []
 
-    # Pattern matches timestamps in various formats followed by chapter titles
-    # Supports: (00:00), [00:00], 00:00 -, 00:00:00, etc.
-    # Matches timestamps like: (00:00), (01:23:45), [00:00], 00:00 -, etc.
-    pattern = r'[\(\[]?(\d{1,2}:\d{2}(?::\d{2})?)\)?[\)\]]?\s*[-–—]?\s*(.+?)(?:\n|$|<)'
+    # Pattern 1: Timestamp BEFORE title (at start of line or after brackets)
+    # Matches: (00:00) Title, [00:00] Title, 00:00 - Title, etc.
+    # The timestamp must be at or near the start, not at the end
+    pattern_ts_first = r'(?:^|\n)\s*[\(\[]?(\d{1,2}:\d{2}(?::\d{2})?)\)?[\)\]]?\s*[-–—]?\s*(.+?)(?=\n|$|<)'
 
-    for match in re.finditer(pattern, text, re.MULTILINE):
+    # Pattern 2: Timestamp AFTER title (e.g., "Chapter Title (00:00:00)")
+    # Matches: Title (00:00:00) or Title (00:00) at end of line or before </li>
+    # Also handles HTML list items: <li>Title (00:00:00)</li>
+    pattern_ts_last = r'(?:^|<li>)([^(<\n]+?)\s*\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*(?:$|</li>)'
+
+    # Try pattern 1 (timestamp before title)
+    for match in re.finditer(pattern_ts_first, text, re.MULTILINE):
         timestamp_str = match.group(1)
         title = match.group(2).strip()
+
+        # Skip if the "title" ends with a timestamp in parentheses - that's pattern 2
+        if re.search(r'\(\d{1,2}:\d{2}(?::\d{2})?\)\s*$', title):
+            continue
 
         # Clean up the title - remove HTML tags and extra whitespace
         title = re.sub(r'<[^>]+>', '', title)
@@ -176,12 +188,47 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
 
         try:
             start_ms = _parse_timestamp_to_ms(timestamp_str)
-            chapters.append(Chapter(
+            chapters_ts_first.append(Chapter(
                 title=title,
                 start_ms=start_ms,
             ))
         except (ValueError, IndexError):
             continue
+
+    # Try pattern 2 (timestamp after title) - used by 80,000 Hours, etc.
+    for match in re.finditer(pattern_ts_last, text, re.MULTILINE):
+        title = match.group(1).strip()
+        timestamp_str = match.group(2)
+
+        # Clean up the title - remove HTML tags and extra whitespace
+        title = re.sub(r'<[^>]+>', '', title)
+        # Decode HTML entities
+        title = html.unescape(title)
+        title = title.strip()
+
+        # Skip empty titles or very short ones
+        if len(title) < 2:
+            continue
+
+        # Skip if title looks like a URL or contains only special chars
+        if title.startswith('http') or not re.search(r'[a-zA-Z]', title):
+            continue
+
+        try:
+            start_ms = _parse_timestamp_to_ms(timestamp_str)
+            chapters_ts_last.append(Chapter(
+                title=title,
+                start_ms=start_ms,
+            ))
+        except (ValueError, IndexError):
+            continue
+
+    # Choose the pattern that found more chapters (they shouldn't overlap)
+    # This avoids mixing formats from the same description
+    if len(chapters_ts_last) > len(chapters_ts_first):
+        chapters = chapters_ts_last
+    else:
+        chapters = chapters_ts_first
 
     # Sort and deduplicate by start time
     chapters.sort(key=lambda c: c.start_ms)

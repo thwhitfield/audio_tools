@@ -17,6 +17,7 @@ setuptools.setup(
         'gTTS',
         'feedparser',
         'requests',
+        'yt-dlp',
     ],
     entry_points = '''
     [console_scripts]

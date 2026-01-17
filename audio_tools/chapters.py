@@ -1,7 +1,9 @@
 """Chapter extraction and splitting logic for podcast episodes."""
 
+import html
 import json
 import math
+import re
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
@@ -130,11 +132,75 @@ def _parse_timestamp_to_ms(timestamp: str) -> int:
     return total_ms
 
 
+def _extract_chapters_from_description(text: str) -> list[Chapter]:
+    """Extract chapters from description/show notes text.
+
+    Many podcasts include chapters in their description in formats like:
+    - "(00:00) Chapter Title"
+    - "(01:23:45) Chapter Title"
+    - "00:00 - Chapter Title"
+    - "[00:00] Chapter Title"
+
+    Args:
+        text: Description or show notes text that may contain chapters
+
+    Returns:
+        List of Chapter objects extracted from the text
+    """
+    chapters = []
+
+    # Pattern matches timestamps in various formats followed by chapter titles
+    # Supports: (00:00), [00:00], 00:00 -, 00:00:00, etc.
+    # Matches timestamps like: (00:00), (01:23:45), [00:00], 00:00 -, etc.
+    pattern = r'[\(\[]?(\d{1,2}:\d{2}(?::\d{2})?)\)?[\)\]]?\s*[-–—]?\s*(.+?)(?:\n|$|<)'
+
+    for match in re.finditer(pattern, text, re.MULTILINE):
+        timestamp_str = match.group(1)
+        title = match.group(2).strip()
+
+        # Clean up the title - remove HTML tags and extra whitespace
+        title = re.sub(r'<[^>]+>', '', title)
+        # Decode HTML entities (e.g., &#8211; -> –, &amp; -> &)
+        title = html.unescape(title)
+        # Remove leading dashes/hyphens that some podcasts use
+        title = re.sub(r'^[-–—]\s*', '', title)
+        title = title.strip()
+
+        # Skip empty titles or very short ones
+        if len(title) < 2:
+            continue
+
+        # Skip if title looks like a URL or contains only special chars
+        if title.startswith('http') or not re.search(r'[a-zA-Z]', title):
+            continue
+
+        try:
+            start_ms = _parse_timestamp_to_ms(timestamp_str)
+            chapters.append(Chapter(
+                title=title,
+                start_ms=start_ms,
+            ))
+        except (ValueError, IndexError):
+            continue
+
+    # Sort and deduplicate by start time
+    chapters.sort(key=lambda c: c.start_ms)
+
+    # Remove duplicates (same start time within 1 second)
+    deduplicated = []
+    for ch in chapters:
+        if not deduplicated or abs(ch.start_ms - deduplicated[-1].start_ms) > 1000:
+            deduplicated.append(ch)
+
+    return deduplicated
+
+
 def extract_chapters_from_rss_entry(entry: dict) -> ChapterInfo:
     """Extract chapter information from a feedparser RSS entry.
 
-    Looks for Podlove Simple Chapters (psc:chapters namespace) which feedparser
-    automatically parses into the entry dict.
+    Looks for chapters in multiple formats:
+    1. Podlove Simple Chapters (psc:chapters namespace)
+    2. Chapters embedded in description/show notes text
 
     Args:
         entry: A feedparser entry dict from an RSS feed
@@ -169,6 +235,21 @@ def extract_chapters_from_rss_entry(entry: dict) -> ChapterInfo:
             title=psc.get('title', 'Untitled'),
             start_ms=start_ms,
         ))
+
+    # If no PSC chapters found, try parsing from description/content
+    if not chapters:
+        # Try summary first, then content
+        description_text = entry.get('summary', '')
+
+        # Also check content (some feeds put chapters there)
+        content_list = entry.get('content', [])
+        if content_list and isinstance(content_list, list):
+            for content_item in content_list:
+                if isinstance(content_item, dict):
+                    description_text += '\n' + content_item.get('value', '')
+
+        if description_text:
+            chapters = _extract_chapters_from_description(description_text)
 
     # Sort chapters by start time
     chapters.sort(key=lambda c: c.start_ms)

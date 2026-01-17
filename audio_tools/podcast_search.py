@@ -5,6 +5,8 @@ import feedparser
 from pathlib import Path
 from typing import Callable
 
+from .chapters import extract_chapters_from_rss_entry, ChapterInfo
+
 
 def search_podcasts(query: str, limit: int = 25) -> list[dict]:
     """Search for podcasts by name using the iTunes Search API.
@@ -79,16 +81,21 @@ def search_episodes(query: str, limit: int = 25) -> list[dict]:
     return episodes
 
 
-def get_podcast_episodes(feed_url: str, limit: int | None = None) -> list[dict]:
+def get_podcast_episodes(
+    feed_url: str,
+    limit: int | None = None,
+    extract_chapters: bool = False,
+) -> list[dict]:
     """Fetch episodes from a podcast RSS feed.
 
     Args:
         feed_url: URL of the podcast RSS feed
         limit: Maximum number of episodes to return (default: None = all episodes)
+        extract_chapters: If True, include chapter info in each episode dict
 
     Returns:
         List of episode dictionaries with keys: title, audio_url, duration,
-        release_date, description
+        release_date, description, and optionally 'chapters' (ChapterInfo)
     """
     feed = feedparser.parse(feed_url)
 
@@ -107,13 +114,22 @@ def get_podcast_episodes(feed_url: str, limit: int | None = None) -> list[dict]:
         # Try to get duration from itunes namespace
         duration = entry.get("itunes_duration")
 
-        episodes.append({
+        episode = {
             "title": entry.get("title"),
             "audio_url": audio_url,
             "duration": duration,
             "release_date": entry.get("published"),
             "description": entry.get("summary", ""),
-        })
+        }
+
+        # Extract chapters if requested
+        if extract_chapters:
+            chapter_info = extract_chapters_from_rss_entry(entry)
+            episode["chapters"] = chapter_info
+            # Also store the raw entry for later use if needed
+            episode["_rss_entry"] = entry
+
+        episodes.append(episode)
 
     return episodes
 

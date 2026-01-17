@@ -54,6 +54,12 @@ from audio_tools.podcast_search import (
     format_duration,
     format_duration_str,
 )
+from audio_tools.chapters import (
+    ChapterInfo,
+    SplitMode,
+    extract_chapters_from_audio,
+    get_chapters,
+)
 from audio_tools.youtube_download import (
     get_video_info,
     download_audio as download_youtube_audio,
@@ -77,6 +83,10 @@ if "cancel_requested" not in st.session_state:
 # Initialize session state for file to process (from Search & Download)
 if "file_for_processing" not in st.session_state:
     st.session_state.file_for_processing = None
+
+# Initialize session state for chapter info
+if "chapter_info" not in st.session_state:
+    st.session_state.chapter_info = None
 
 
 def request_cancel():
@@ -288,7 +298,7 @@ elif mode == "Process Podcast":
     if "cached_episode_search" not in st.session_state:
         st.session_state.cached_episode_search = {"query": None, "results": []}
 
-    def download_and_store_episode(audio_url: str, title: str):
+    def download_and_store_episode(audio_url: str, title: str, chapter_info: ChapterInfo | None = None):
         """Download an episode and store it in session state for processing."""
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
             download_episode(audio_url, tmp_file.name)
@@ -306,6 +316,8 @@ elif mode == "Process Podcast":
             "bytes": audio_bytes,
             "filename": filename,
         }
+        # Store chapter info if available
+        st.session_state.chapter_info = chapter_info
         # Clear search state
         st.session_state.selected_podcast = None
         st.session_state.podcast_episodes = None
@@ -316,6 +328,7 @@ elif mode == "Process Podcast":
         st.success(f"Ready to process: {st.session_state.file_for_processing['filename']}")
         if st.button("Choose different file"):
             st.session_state.file_for_processing = None
+            st.session_state.chapter_info = None
             st.rerun()
     else:
         # Show file source options using tabs
@@ -493,7 +506,8 @@ elif mode == "Process Podcast":
                     with st.spinner("Loading episodes..."):
                         try:
                             st.session_state.podcast_episodes = get_podcast_episodes(
-                                podcast["feed_url"]
+                                podcast["feed_url"],
+                                extract_chapters=True,  # Extract chapters from RSS
                             )
                             st.session_state.feed_episode_page = 0
                         except Exception as e:
@@ -566,12 +580,17 @@ elif mode == "Process Podcast":
 
                             with col2:
                                 if episode.get("audio_url"):
+                                    # Show chapter indicator if available
+                                    ep_chapters = episode.get("chapters")
+                                    if ep_chapters and ep_chapters.has_chapters:
+                                        st.caption(f"📑 {len(ep_chapters.chapters)} chapters")
                                     if st.button("Select", key=f"sel_feed_{page_start + i}", type="primary"):
                                         with st.spinner("Downloading..."):
                                             try:
                                                 download_and_store_episode(
                                                     episode["audio_url"],
                                                     episode["title"],
+                                                    chapter_info=episode.get("chapters"),
                                                 )
                                                 st.rerun()
                                             except Exception as e:
@@ -605,6 +624,9 @@ elif mode == "Process Podcast":
                     "bytes": uploaded_file.getvalue(),
                     "filename": uploaded_file.name,
                 }
+                # For uploaded files, we'll try to extract chapters from the audio during processing
+                # Clear any existing chapter info (no RSS chapters for uploads)
+                st.session_state.chapter_info = None
                 st.rerun()
 
     # Only show processing options if we have a file
@@ -645,6 +667,56 @@ elif mode == "Process Podcast":
                 step=0.1,
                 key="full_process_speed",
                 help="1.0 = normal, 1.5 = 50% faster, 0.75 = 25% slower",
+            )
+
+        # Chapter-aware splitting options
+        chapter_info = st.session_state.chapter_info
+        has_chapters = chapter_info is not None and chapter_info.has_chapters
+
+        # Split mode selector
+        split_mode_options = ["Fixed Intervals", "By Chapters", "Hybrid"]
+        split_mode_help = {
+            "Fixed Intervals": "Split every N minutes (current behavior)",
+            "By Chapters": "Split at chapter boundaries only",
+            "Hybrid": "Split at chapters, but also split long chapters",
+        }
+
+        # Default to "By Chapters" if chapters are available, else "Fixed Intervals"
+        default_mode_index = 1 if has_chapters else 0
+
+        split_mode_label = st.radio(
+            "Split Mode",
+            split_mode_options,
+            index=default_mode_index,
+            horizontal=True,
+            help="How to split the audio into parts",
+        )
+
+        # Map label to SplitMode enum
+        split_mode_map = {
+            "Fixed Intervals": SplitMode.FIXED,
+            "By Chapters": SplitMode.CHAPTERS,
+            "Hybrid": SplitMode.HYBRID,
+        }
+        split_mode = split_mode_map[split_mode_label]
+
+        # Show warning if chapter mode selected but no chapters
+        if split_mode != SplitMode.FIXED and not has_chapters:
+            st.warning("No chapters detected. Will use fixed intervals instead.")
+
+        # Chapter preview if available
+        if has_chapters:
+            with st.expander(f"📑 Preview Chapters ({len(chapter_info.chapters)} chapters)", expanded=False):
+                for i, ch in enumerate(chapter_info.chapters):
+                    st.markdown(f"**{i + 1}. {ch.title}** — {ch.start_time_str()}")
+
+        # TOC option (only show if chapters available)
+        generate_toc = False
+        if has_chapters:
+            generate_toc = st.checkbox(
+                "Generate Table of Contents",
+                value=True,
+                help="Create a spoken TOC as the first file, listing chapters and their part numbers",
             )
 
         use_part_numbers = st.checkbox(
@@ -726,6 +798,9 @@ elif mode == "Process Podcast":
                         use_part_numbers_only=use_part_numbers,
                         progress_callback=update_progress,
                         speed=speed,
+                        split_mode=split_mode,
+                        chapter_info=chapter_info,
+                        generate_toc=generate_toc,
                     )
 
                     # Update progress for zip creation
@@ -753,9 +828,10 @@ elif mode == "Process Podcast":
                     elapsed_time = time.time() - start_time
                     st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
 
-                    # Clear the file_for_processing after successful processing
+                    # Clear the file_for_processing and chapter_info after successful processing
                     if st.session_state.file_for_processing:
                         st.session_state.file_for_processing = None
+                    st.session_state.chapter_info = None
 
                     # Preview first chunk
                     if processed_files:

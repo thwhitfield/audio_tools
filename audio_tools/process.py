@@ -1,10 +1,20 @@
 import os
 from io import BytesIO
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from gtts import gTTS
 from pydub import AudioSegment
+
+from .chapters import (
+    ChapterInfo,
+    SplitMode,
+    SplitSegment,
+    calculate_segments,
+    extract_chapters_from_audio,
+    generate_toc_audio,
+)
 
 # import click
 
@@ -279,6 +289,9 @@ def full_process_podcast_episode(
     use_part_numbers_only=True,
     progress_callback=None,
     speed=1.0,
+    split_mode: SplitMode | str = SplitMode.FIXED,
+    chapter_info: ChapterInfo | None = None,
+    generate_toc: bool = False,
 ):
     """Fully process a podcast episode by adjusting sound level and adding filename audio.
 
@@ -289,11 +302,20 @@ def full_process_podcast_episode(
         filepath (str, path): filepath of the podcast audio mp3 to be processed
         db_change (int, default: 10): number of decibels to change the audio (positive values increase the
             sound level)
+        split_length (int, default: 10): length in minutes for fixed splits or max chapter
+            length for hybrid mode
         use_part_numbers_only (bool, default: True): if True, use only "part 1", "part 2", etc. as the
             start audio text instead of the full filename
         progress_callback (callable, default: None): optional callback function that receives
             (current_chunk, total_chunks, status_message) to report progress
         speed (float, default: 1.0): playback speed multiplier (e.g., 1.5 = 50% faster)
+        split_mode (SplitMode, default: FIXED): splitting strategy - FIXED (time intervals),
+            CHAPTERS (at chapter boundaries), or HYBRID (chapters + split long ones)
+        chapter_info (ChapterInfo, default: None): pre-extracted chapter info. If None and
+            split_mode is not FIXED, will attempt to extract from audio file
+        generate_toc (bool, default: False): if True, generate a table of contents audio
+            file as part 00
+
     Returns:
         output_path (Path): path to the processed podcast episode
     """
@@ -303,6 +325,10 @@ def full_process_podcast_episode(
 
     if not output_folder.exists():
         output_folder.mkdir(parents=True, exist_ok=True)
+
+    # Convert string to SplitMode if needed
+    if isinstance(split_mode, str):
+        split_mode = SplitMode(split_mode)
 
     # Report loading status
     if progress_callback:
@@ -323,35 +349,55 @@ def full_process_podcast_episode(
             progress_callback(0, 1, "Adjusting playback speed...")
         pod = change_speed(pod, speed)
 
-    # Calculate split parameters
-    split_ms = split_length * 60000  # Convert minutes to milliseconds
     total_length = len(pod)
-    num_chunks = (total_length // split_ms) + (1 if total_length % split_ms else 0)
+    split_ms = split_length * 60000  # Convert minutes to milliseconds
 
-    # Process each chunk in memory and export directly
-    for i in range(num_chunks):
+    # For chapter-aware modes, get chapter info if not provided
+    if split_mode != SplitMode.FIXED and chapter_info is None:
         if progress_callback:
-            progress_callback(i, num_chunks, f"Processing chunk {i + 1} of {num_chunks}...")
+            progress_callback(0, 1, "Extracting chapter information...")
+        chapter_info = extract_chapters_from_audio(filepath)
 
-        start_time = i * split_ms
-        end_time = min((i + 1) * split_ms, total_length)
+    # If no chapters found but using chapter mode, create empty ChapterInfo
+    if chapter_info is None:
+        chapter_info = ChapterInfo()
+
+    # Calculate segments based on mode
+    segments = calculate_segments(
+        chapter_info=chapter_info,
+        total_duration_ms=total_length,
+        mode=split_mode,
+        split_length_ms=split_ms,
+    )
+
+    num_chunks = len(segments)
+
+    # Generate TOC if requested and we have chapter-aware segments
+    if generate_toc and chapter_info.has_chapters:
+        if progress_callback:
+            progress_callback(0, num_chunks, "Generating table of contents...")
+
+        toc_audio = generate_toc_audio(segments, episode_title=stem.replace("_", " "))
+        toc_filename = f"louder_{stem}_part00.mp3"
+        toc_audio.export(output_folder / toc_filename)
+
+    # Process each segment
+    for i, segment in enumerate(segments):
+        if progress_callback:
+            progress_callback(i, num_chunks, f"Processing part {segment.global_part_number} of {num_chunks}...")
 
         # Extract chunk (already has volume adjusted)
-        chunk = pod[start_time:end_time]
+        chunk = pod[segment.start_ms:segment.end_ms]
 
-        # Generate intro audio
-        if use_part_numbers_only:
-            intro_text = f"part {i + 1}"
-        else:
-            intro_text = stem.replace("_", " ")
-
+        # Generate intro audio - always use part number
+        intro_text = f"part {segment.global_part_number}"
         intro = _generate_intro_audio(intro_text)
 
         # Combine intro + chunk
         final_chunk = intro + chunk
 
         # Export directly (single disk write per chunk)
-        output_filename = f"louder_{stem}_part{i + 1:02d}.mp3"
+        output_filename = f"louder_{stem}_part{segment.global_part_number:02d}.mp3"
         final_chunk.export(output_folder / output_filename)
 
     if progress_callback:

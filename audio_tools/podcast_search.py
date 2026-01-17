@@ -150,7 +150,14 @@ def download_episode(
     Returns:
         Path to the downloaded file
     """
-    response = requests.get(audio_url, stream=True)
+    # Use headers that mimic a podcast app to avoid 403 errors from CDNs
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "audio/mpeg, audio/*, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.google.com/",
+    }
+    response = requests.get(audio_url, stream=True, headers=headers)
     response.raise_for_status()
 
     total_size = int(response.headers.get("content-length", 0))

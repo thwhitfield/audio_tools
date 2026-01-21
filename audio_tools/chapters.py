@@ -11,6 +11,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
+from bs4 import BeautifulSoup
 from gtts import gTTS
 from pydub import AudioSegment
 
@@ -135,26 +136,39 @@ def _parse_timestamp_to_ms(timestamp: str) -> int:
 def _normalize_html_to_text(text: str) -> str:
     """Normalize HTML content to plain text with proper line breaks.
 
-    Converts HTML block elements and <br> tags to newlines so that
-    chapter timestamps can be properly detected at line boundaries.
+    Uses BeautifulSoup to properly parse HTML and extract text, converting
+    block elements to newlines so chapter timestamps can be detected.
 
     Args:
         text: HTML or plain text content
 
     Returns:
-        Normalized text with HTML converted to line breaks
+        Normalized plain text with proper line breaks
     """
-    # Replace <br>, <br/>, <br /> with newlines
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    # Check if text contains HTML tags
+    if '<' not in text:
+        return text
 
-    # Replace closing block tags with newlines (</p>, </div>, </li>, etc.)
-    text = re.sub(r'</(?:p|div|li|tr|h[1-6])>', '\n', text, flags=re.IGNORECASE)
+    # Parse HTML with BeautifulSoup
+    soup = BeautifulSoup(text, 'html.parser')
 
-    # Replace opening block tags with newlines (to handle <p>text cases)
-    text = re.sub(r'<(?:p|div|li|tr|h[1-6])(?:\s[^>]*)?>', '\n', text, flags=re.IGNORECASE)
+    # Replace <br> tags with newlines
+    for br in soup.find_all('br'):
+        br.replace_with('\n')
+
+    # Replace block-level elements with their text plus newlines
+    for tag in soup.find_all(['p', 'div', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+        tag.insert_before('\n')
+        tag.insert_after('\n')
+
+    # Get text content
+    text = soup.get_text()
 
     # Collapse multiple newlines into single newlines
     text = re.sub(r'\n\s*\n', '\n', text)
+
+    # Strip leading/trailing whitespace
+    text = text.strip()
 
     return text
 
@@ -168,6 +182,7 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
     - "00:00 - Chapter Title"
     - "[00:00] Chapter Title"
     - "Chapter Title (00:00:00)" - timestamp after title
+    - "Chapter Title |00:00:00|" - pipe-delimited timestamp (80,000 Hours)
 
     Also handles HTML-formatted descriptions where chapters are in <p>, <div>,
     <li>, or separated by <br> tags.
@@ -184,15 +199,18 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
     chapters_ts_first = []
     chapters_ts_last = []
 
-    # Pattern 1: Timestamp BEFORE title (at start of line or after brackets)
+    # Pattern 1: Timestamp BEFORE title (at start of line)
     # Matches: (00:00) Title, [00:00] Title, 00:00 - Title, etc.
     # The timestamp must be at or near the start, not at the end
-    pattern_ts_first = r'(?:^|\n)\s*[\(\[]?(\d{1,2}:\d{2}(?::\d{2})?)\)?[\)\]]?\s*[-–—]?\s*(.+?)(?=\n|$|<)'
+    pattern_ts_first = r'(?:^|\n)\s*[\(\[]?(\d{1,2}:\d{2}(?::\d{2})?)\)?[\)\]]?\s*[-–—]?\s*(.+?)(?=\n|$)'
 
-    # Pattern 2: Timestamp AFTER title (e.g., "Chapter Title (00:00:00)")
-    # Matches: Title (00:00:00) or Title (00:00) at end of line or before </li>
-    # Also handles HTML list items: <li>Title (00:00:00)</li>
-    pattern_ts_last = r'(?:^|<li>)([^(<\n]+?)\s*\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*(?:$|</li>)'
+    # Pattern 2: Timestamp AFTER title in parentheses
+    # Matches: Title (00:00:00) or Title (00:00) at end of line
+    pattern_ts_last_parens = r'(?:^|\n)\s*([^(\n]+?)\s*\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*(?=\n|$)'
+
+    # Pattern 3: Timestamp AFTER title in pipe delimiters (80,000 Hours format)
+    # Matches: Title |00:00:00| or Title |00:00|
+    pattern_ts_last_pipes = r'(?:^|\n)\s*([^|\n]+?)\s*\|(\d{1,2}:\d{2}(?::\d{2})?)\|\s*(?=\n|$)'
 
     # Try pattern 1 (timestamp before title) on normalized text
     for match in re.finditer(pattern_ts_first, normalized_text, re.MULTILINE):
@@ -228,33 +246,37 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
         except (ValueError, IndexError):
             continue
 
-    # Try pattern 2 (timestamp after title) - used by 80,000 Hours, etc.
-    for match in re.finditer(pattern_ts_last, text, re.MULTILINE):
-        title = match.group(1).strip()
-        timestamp_str = match.group(2)
+    # Try patterns 2 and 3 (timestamp after title) on normalized text
+    # Combine both parentheses and pipe formats
+    for pattern in [pattern_ts_last_parens, pattern_ts_last_pipes]:
+        for match in re.finditer(pattern, normalized_text, re.MULTILINE):
+            title = match.group(1).strip()
+            timestamp_str = match.group(2)
 
-        # Clean up the title - remove HTML tags and extra whitespace
-        title = re.sub(r'<[^>]+>', '', title)
-        # Decode HTML entities
-        title = html.unescape(title)
-        title = title.strip()
+            # Clean up the title - remove any remaining HTML tags
+            title = re.sub(r'<[^>]+>', '', title)
+            # Decode HTML entities
+            title = html.unescape(title)
+            # Remove bullet points and list markers
+            title = re.sub(r'^[\s•\-\*]+', '', title)
+            title = title.strip()
 
-        # Skip empty titles or very short ones
-        if len(title) < 2:
-            continue
+            # Skip empty titles or very short ones
+            if len(title) < 2:
+                continue
 
-        # Skip if title looks like a URL or contains only special chars
-        if title.startswith('http') or not re.search(r'[a-zA-Z]', title):
-            continue
+            # Skip if title looks like a URL or contains only special chars
+            if title.startswith('http') or not re.search(r'[a-zA-Z]', title):
+                continue
 
-        try:
-            start_ms = _parse_timestamp_to_ms(timestamp_str)
-            chapters_ts_last.append(Chapter(
-                title=title,
-                start_ms=start_ms,
-            ))
-        except (ValueError, IndexError):
-            continue
+            try:
+                start_ms = _parse_timestamp_to_ms(timestamp_str)
+                chapters_ts_last.append(Chapter(
+                    title=title,
+                    start_ms=start_ms,
+                ))
+            except (ValueError, IndexError):
+                continue
 
     # Choose the pattern that found more chapters (they shouldn't overlap)
     # This avoids mixing formats from the same description

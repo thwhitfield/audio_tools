@@ -132,6 +132,33 @@ def _parse_timestamp_to_ms(timestamp: str) -> int:
     return total_ms
 
 
+def _normalize_html_to_text(text: str) -> str:
+    """Normalize HTML content to plain text with proper line breaks.
+
+    Converts HTML block elements and <br> tags to newlines so that
+    chapter timestamps can be properly detected at line boundaries.
+
+    Args:
+        text: HTML or plain text content
+
+    Returns:
+        Normalized text with HTML converted to line breaks
+    """
+    # Replace <br>, <br/>, <br /> with newlines
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+
+    # Replace closing block tags with newlines (</p>, </div>, </li>, etc.)
+    text = re.sub(r'</(?:p|div|li|tr|h[1-6])>', '\n', text, flags=re.IGNORECASE)
+
+    # Replace opening block tags with newlines (to handle <p>text cases)
+    text = re.sub(r'<(?:p|div|li|tr|h[1-6])(?:\s[^>]*)?>', '\n', text, flags=re.IGNORECASE)
+
+    # Collapse multiple newlines into single newlines
+    text = re.sub(r'\n\s*\n', '\n', text)
+
+    return text
+
+
 def _extract_chapters_from_description(text: str) -> list[Chapter]:
     """Extract chapters from description/show notes text.
 
@@ -142,12 +169,18 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
     - "[00:00] Chapter Title"
     - "Chapter Title (00:00:00)" - timestamp after title
 
+    Also handles HTML-formatted descriptions where chapters are in <p>, <div>,
+    <li>, or separated by <br> tags.
+
     Args:
         text: Description or show notes text that may contain chapters
 
     Returns:
         List of Chapter objects extracted from the text
     """
+    # Normalize HTML to plain text with proper line breaks
+    normalized_text = _normalize_html_to_text(text)
+
     chapters_ts_first = []
     chapters_ts_last = []
 
@@ -161,8 +194,8 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
     # Also handles HTML list items: <li>Title (00:00:00)</li>
     pattern_ts_last = r'(?:^|<li>)([^(<\n]+?)\s*\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*(?:$|</li>)'
 
-    # Try pattern 1 (timestamp before title)
-    for match in re.finditer(pattern_ts_first, text, re.MULTILINE):
+    # Try pattern 1 (timestamp before title) on normalized text
+    for match in re.finditer(pattern_ts_first, normalized_text, re.MULTILINE):
         timestamp_str = match.group(1)
         title = match.group(2).strip()
 

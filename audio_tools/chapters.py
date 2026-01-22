@@ -204,13 +204,17 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
     # The timestamp must be at or near the start, not at the end
     pattern_ts_first = r'(?:^|\n)\s*[\(\[]?(\d{1,2}:\d{2}(?::\d{2})?)\)?[\)\]]?\s*[-–—]?\s*(.+?)(?=\n|$)'
 
-    # Pattern 2: Timestamp AFTER title in parentheses
+    # Pattern 2: Timestamp AFTER title in parentheses (at end of line)
     # Matches: Title (00:00:00) or Title (00:00) at end of line
     pattern_ts_last_parens = r'(?:^|\n)\s*([^(\n]+?)\s*\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*(?=\n|$)'
 
     # Pattern 3: Timestamp AFTER title in pipe delimiters (80,000 Hours format)
     # Matches: Title |00:00:00| or Title |00:00|
     pattern_ts_last_pipes = r'(?:^|\n)\s*([^|\n]+?)\s*\|(\d{1,2}:\d{2}(?::\d{2})?)\|\s*(?=\n|$)'
+
+    # Pattern 4: Timestamp in middle with description after (Tennis Podcast format)
+    # Matches: Part one (30:21) - Description or Title (00:00) - More text
+    pattern_ts_middle = r'(?:^|\n)\s*([^(\n]+?)\s*\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*[-–—]\s*(.+?)(?=\n|$)'
 
     # Try pattern 1 (timestamp before title) on normalized text
     for match in re.finditer(pattern_ts_first, normalized_text, re.MULTILINE):
@@ -278,12 +282,50 @@ def _extract_chapters_from_description(text: str) -> list[Chapter]:
             except (ValueError, IndexError):
                 continue
 
-    # Choose the pattern that found more chapters (they shouldn't overlap)
-    # This avoids mixing formats from the same description
-    if len(chapters_ts_last) > len(chapters_ts_first):
-        chapters = chapters_ts_last
-    else:
-        chapters = chapters_ts_first
+    # Try pattern 4 (timestamp in middle with description after)
+    # e.g., "Part one (30:21) - Women's Results"
+    chapters_ts_middle = []
+    for match in re.finditer(pattern_ts_middle, normalized_text, re.MULTILINE):
+        prefix = match.group(1).strip()
+        timestamp_str = match.group(2)
+        suffix = match.group(3).strip()
+
+        # Combine prefix and suffix for the title, or just use suffix if prefix is generic
+        # Common generic prefixes: Part 1, Part one, Chapter 1, etc.
+        if re.match(r'^(part|chapter|section|segment)\s+\w+$', prefix, re.IGNORECASE):
+            title = suffix
+        else:
+            title = f"{prefix} - {suffix}"
+
+        # Clean up the title
+        title = re.sub(r'<[^>]+>', '', title)
+        title = html.unescape(title)
+        title = title.strip()
+
+        # Skip empty titles or very short ones
+        if len(title) < 2:
+            continue
+
+        # Skip if title looks like a URL or contains only special chars
+        if title.startswith('http') or not re.search(r'[a-zA-Z]', title):
+            continue
+
+        try:
+            start_ms = _parse_timestamp_to_ms(timestamp_str)
+            chapters_ts_middle.append(Chapter(
+                title=title,
+                start_ms=start_ms,
+            ))
+        except (ValueError, IndexError):
+            continue
+
+    # Choose the pattern that found the most chapters
+    all_results = [
+        ('ts_first', chapters_ts_first),
+        ('ts_last', chapters_ts_last),
+        ('ts_middle', chapters_ts_middle),
+    ]
+    best_pattern, chapters = max(all_results, key=lambda x: len(x[1]))
 
     # Sort and deduplicate by start time
     chapters.sort(key=lambda c: c.start_ms)

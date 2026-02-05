@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -66,6 +67,7 @@ from audio_tools.youtube_download import (
     format_duration as format_youtube_duration,
     is_valid_youtube_url,
 )
+from audio_tools.archive import PodcastArchive, PodcastRecord
 
 st.set_page_config(
     page_title="Audio Tools",
@@ -104,7 +106,7 @@ class ProcessingCancelled(Exception):
 
 
 # Mode options - About first as landing page
-ALL_MODES = ["About", "Process Podcast", "YouTube Audio", "Single File (No Split)", "Batch Process Folder"]
+ALL_MODES = ["About", "Process Podcast", "YouTube Audio", "Single File (No Split)", "Batch Process Folder", "Archive"]
 
 # Initialize the radio key if not present
 if "mode_radio" not in st.session_state:
@@ -114,7 +116,7 @@ if "mode_radio" not in st.session_state:
 mode = st.sidebar.radio(
     "Mode",
     ALL_MODES,
-    captions=["Welcome & help", "Search or upload podcasts", "Download from YouTube", None, None],
+    captions=["Welcome & help", "Search or upload podcasts", "Download from YouTube", None, None, "View processing history"],
     key="mode_radio",
 )
 
@@ -178,6 +180,59 @@ def format_time(seconds, prefix="~"):
     if minutes == 0:
         return f"{prefix}{remaining_seconds}s"
     return f"{prefix}{minutes}m {remaining_seconds:02d}s"
+
+
+def save_to_archive(
+    title: str,
+    source_type: str,
+    settings: dict,
+    num_chunks: int,
+    output_folder: Path,
+    podcast_name: str = None,
+) -> Optional[PodcastRecord]:
+    """Save processed files to archive and create a record.
+
+    Args:
+        title: Title of the episode
+        source_type: Type of source ("podcast", "youtube", "upload", "batch")
+        settings: Processing settings dict
+        num_chunks: Number of chunks created
+        output_folder: Path to folder containing processed files
+        podcast_name: Optional podcast name
+
+    Returns:
+        The created PodcastRecord or None if archiving failed
+    """
+    try:
+        archive = PodcastArchive()
+
+        # Create record first to get ID
+        record = archive.add_record(
+            title=title,
+            source_type=source_type,
+            settings=settings,
+            num_chunks=num_chunks,
+            podcast_name=podcast_name,
+            processed_files_dir=None,  # Will update after copying files
+        )
+
+        # Create storage directory for this record
+        storage_dir = archive.create_record_storage_dir(record.id)
+
+        # Copy all processed files to archive storage
+        import shutil
+        processed_files = list(output_folder.glob("louder_*.mp3"))
+        for mp3_file in processed_files:
+            shutil.copy2(mp3_file, storage_dir / mp3_file.name)
+
+        # Update record with storage directory path
+        record.processed_files_dir = str(storage_dir)
+        archive._save()
+
+        return record
+    except Exception as e:
+        print(f"Warning: Could not save to archive: {e}")
+        return None
 
 
 # =============================================================================
@@ -862,6 +917,23 @@ elif mode == "Process Podcast":
                     elapsed_time = time.time() - start_time
                     st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
 
+                    # Save to archive
+                    archive_settings = {
+                        "volume_db": db_change,
+                        "speed": speed,
+                        "split_length": split_length,
+                        "split_mode": split_mode_label,
+                        "use_part_numbers": use_part_numbers,
+                        "generate_toc": generate_toc if has_chapters else False,
+                    }
+                    save_to_archive(
+                        title=Path(file_name).stem,
+                        source_type="podcast",
+                        settings=archive_settings,
+                        num_chunks=num_files,
+                        output_folder=output_folder,
+                    )
+
                     # Clear the file_for_processing, chapter_info, and description after successful processing
                     if st.session_state.file_for_processing:
                         st.session_state.file_for_processing = None
@@ -1139,6 +1211,21 @@ elif mode == "YouTube Audio":
                     num_files = len(processed_files)
                     elapsed_time = time.time() - start_time
                     st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
+
+                    # Save to archive
+                    archive_settings = {
+                        "volume_db": db_change,
+                        "speed": speed,
+                        "split_length": split_length,
+                        "use_part_numbers": use_part_numbers,
+                    }
+                    save_to_archive(
+                        title=Path(file_name).stem,
+                        source_type="youtube",
+                        settings=archive_settings,
+                        num_chunks=num_files,
+                        output_folder=output_folder,
+                    )
 
                     # Clear the file after successful processing
                     if st.session_state.youtube_file_for_processing:
@@ -1454,3 +1541,150 @@ elif mode == "Batch Process Folder":
                     status_text.empty()
                     cancel_container.empty()
                     st.error(f"Error processing files: {e}")
+
+
+# =============================================================================
+# Archive Mode
+# =============================================================================
+elif mode == "Archive":
+    st.header("Processing Archive")
+    st.markdown("View and download previously processed podcasts.")
+
+    # Initialize archive
+    archive = PodcastArchive()
+
+    # Initialize session state for archive view
+    if "archive_view" not in st.session_state:
+        st.session_state.archive_view = "list"  # "list" or "info"
+
+    # View selector
+    view_tabs = st.tabs(["Archive", "Info"])
+
+    with view_tabs[0]:
+        if not archive.records:
+            st.info("No processed podcasts in archive yet. Process some podcasts to see them here!")
+        else:
+            # Statistics
+            stats = archive.get_statistics()
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Processed", stats["total_records"])
+            with col2:
+                st.metric("Total Chunks", stats["total_chunks"])
+            with col3:
+                top_source_name, top_source_count = stats["top_source"]
+                st.metric("Top Source", f"{top_source_name} ({top_source_count})")
+
+            st.markdown("---")
+
+            # Search box
+            search_query = st.text_input(
+                "Search archive",
+                placeholder="Search by title or podcast name...",
+                key="archive_search",
+            )
+
+            # Filter records based on search
+            if search_query:
+                display_records = archive.search(search_query)
+                if not display_records:
+                    st.info("No records match your search.")
+            else:
+                display_records = archive.records
+
+            # Display records in reverse chronological order (newest first)
+            display_records = sorted(display_records, key=lambda r: r.date, reverse=True)
+
+            for record in display_records:
+                with st.container():
+                    col1, col2 = st.columns([3, 1])
+
+                    with col1:
+                        st.markdown(f"**{record.title}**")
+                        # Parse and format date
+                        try:
+                            date_obj = datetime.fromisoformat(record.date)
+                            date_str = date_obj.strftime("%Y-%m-%d %H:%M")
+                        except:
+                            date_str = record.date
+                        st.caption(f"Processed: {date_str} | Source: {record.source_type} | Chunks: {record.num_chunks}")
+
+                    with col2:
+                        # Download button for processed files
+                        if record.processed_files_dir:
+                            processed_dir = Path(record.processed_files_dir)
+                            if processed_dir.exists():
+                                # Create zip of processed files on-the-fly
+                                zip_buffer = BytesIO()
+                                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                                    for mp3_file in sorted(processed_dir.glob("louder_*.mp3")):
+                                        zip_file.write(mp3_file, mp3_file.name)
+                                zip_buffer.seek(0)
+
+                                st.download_button(
+                                    label="Download",
+                                    data=zip_buffer.getvalue(),
+                                    file_name=f"{record.title[:30]}_processed.zip",
+                                    mime="application/zip",
+                                    key=f"download_{record.id}",
+                                    use_container_width=True,
+                                )
+                            else:
+                                st.caption("Files not found")
+                        else:
+                            st.caption("No files")
+
+                    # Settings expander
+                    with st.expander("Settings & Details"):
+                        st.json(record.settings)
+
+                        # Delete button
+                        if st.button("Delete Record", key=f"delete_{record.id}", type="secondary"):
+                            if archive.delete_record(record.id):
+                                st.success("Record deleted!")
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete record")
+
+                    st.markdown("---")
+
+            # Clear all button
+            st.markdown("### Archive Management")
+            if st.button("Clear Entire Archive", type="secondary"):
+                if st.button("Confirm Clear All", type="secondary", key="confirm_clear"):
+                    archive.clear_all()
+                    st.success("Archive cleared!")
+                    st.rerun()
+
+    with view_tabs[1]:
+        st.markdown("""
+### About the Archive
+
+The archive automatically saves processed podcasts so you can:
+- **Download them again** without reprocessing
+- **Review processing settings** you used previously
+- **Track your listening history**
+
+### What Gets Archived
+
+Every time you process a podcast, the following information is saved:
+- **Title and source information**
+- **Processing settings** (volume, speed, split length, etc.)
+- **Processed audio files** (stored in `~/.audio_tools/archive/`)
+- **Processing date and time**
+- **Number of chunks created**
+
+### Storage Location
+
+- Archive metadata: `~/.audio_tools/archive/archive.json`
+- Processed files: `~/.audio_tools/archive/processed_files/`
+
+### Managing Storage
+
+Each processed podcast takes up disk space. To free up space:
+1. Delete individual records from the Archive view
+2. Or clear the entire archive using the "Clear Entire Archive" button
+
+Deleting a record removes both the metadata and the associated audio files.
+        """)
+

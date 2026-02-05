@@ -10,3 +10,4 @@ from .chapters import (
     calculate_segments,
     generate_toc_audio,
 )
+from .archive import PodcastArchive, PodcastRecord

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -66,6 +67,7 @@ from audio_tools.youtube_download import (
     format_duration as format_youtube_duration,
     is_valid_youtube_url,
 )
+from audio_tools.archive import PodcastArchive, PodcastRecord
 
 st.set_page_config(
     page_title="Audio Tools",
@@ -104,7 +106,7 @@ class ProcessingCancelled(Exception):
 
 
 # Mode options - About first as landing page
-ALL_MODES = ["About", "Process Podcast", "YouTube Audio", "Single File (No Split)", "Batch Process Folder"]
+ALL_MODES = ["About", "Process Podcast", "YouTube Audio", "Single File (No Split)", "Batch Process Folder", "Archive"]
 
 # Initialize the radio key if not present
 if "mode_radio" not in st.session_state:
@@ -114,7 +116,7 @@ if "mode_radio" not in st.session_state:
 mode = st.sidebar.radio(
     "Mode",
     ALL_MODES,
-    captions=["Welcome & help", "Search or upload podcasts", "Download from YouTube", None, None],
+    captions=["Welcome & help", "Search or upload podcasts", "Download from YouTube", None, None, "View processing history"],
     key="mode_radio",
 )
 
@@ -862,6 +864,27 @@ elif mode == "Process Podcast":
                     elapsed_time = time.time() - start_time
                     st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
 
+                    # Log to archive
+                    try:
+                        archive = PodcastArchive()
+                        record = PodcastRecord(
+                            id="",  # Will be auto-generated
+                            title=Path(file_name).stem.replace("_", " "),
+                            processed_date=datetime.now().isoformat(),
+                            db_change=db_change,
+                            speed=speed,
+                            split_length=split_length,
+                            split_mode=split_mode.value if hasattr(split_mode, 'value') else str(split_mode),
+                            use_part_numbers=use_part_numbers,
+                            generate_toc=generate_toc,
+                            source_type="podcast" if "file_for_processing" in st.session_state else "upload",
+                            num_chunks=num_files,
+                        )
+                        archive.add_record(record)
+                    except Exception as e:
+                        # Don't fail the whole process if archiving fails
+                        print(f"Warning: Failed to log to archive: {e}")
+
                     # Clear the file_for_processing, chapter_info, and description after successful processing
                     if st.session_state.file_for_processing:
                         st.session_state.file_for_processing = None
@@ -1140,6 +1163,26 @@ elif mode == "YouTube Audio":
                     elapsed_time = time.time() - start_time
                     st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
 
+                    # Log to archive
+                    try:
+                        archive = PodcastArchive()
+                        record = PodcastRecord(
+                            id="",  # Will be auto-generated
+                            title=Path(file_name).stem.replace("_", " "),
+                            processed_date=datetime.now().isoformat(),
+                            db_change=db_change,
+                            speed=speed,
+                            split_length=split_length,
+                            use_part_numbers=use_part_numbers,
+                            generate_toc=False,
+                            source_type="youtube",
+                            num_chunks=num_files,
+                        )
+                        archive.add_record(record)
+                    except Exception as e:
+                        # Don't fail the whole process if archiving fails
+                        print(f"Warning: Failed to log to archive: {e}")
+
                     # Clear the file after successful processing
                     if st.session_state.youtube_file_for_processing:
                         st.session_state.youtube_file_for_processing = None
@@ -1273,6 +1316,26 @@ elif mode == "Single File (No Split)":
 
                 elapsed_time = time.time() - start_time
                 st.success(f"Processing complete! Took {format_time(elapsed_time, prefix='')}.")
+
+                # Log to archive
+                try:
+                    archive = PodcastArchive()
+                    record = PodcastRecord(
+                        id="",  # Will be auto-generated
+                        title=Path(uploaded_file.name).stem.replace("_", " "),
+                        processed_date=datetime.now().isoformat(),
+                        db_change=db_change if db_change != 0 else 0,
+                        speed=speed,
+                        split_length=None,  # No splitting in single file mode
+                        use_part_numbers=False,
+                        generate_toc=False,
+                        source_type="upload",
+                        num_chunks=1,
+                    )
+                    archive.add_record(record)
+                except Exception as e:
+                    # Don't fail the whole process if archiving fails
+                    print(f"Warning: Failed to log to archive: {e}")
 
                 # Preview processed audio
                 st.markdown("**Preview processed audio:**")
@@ -1435,6 +1498,26 @@ elif mode == "Batch Process Folder":
                     elapsed_time = time.time() - start_time
                     st.success(f"Processing complete! Processed {num_processed} files in {format_time(elapsed_time, prefix='')}.")
 
+                    # Log to archive (one record for the batch)
+                    try:
+                        archive = PodcastArchive()
+                        record = PodcastRecord(
+                            id="",  # Will be auto-generated
+                            title=f"Batch: {num_processed} files",
+                            processed_date=datetime.now().isoformat(),
+                            db_change=db_change,
+                            speed=speed,
+                            split_length=None,  # No splitting in batch mode
+                            use_part_numbers=False,
+                            generate_toc=False,
+                            source_type="batch",
+                            num_chunks=num_processed,
+                        )
+                        archive.add_record(record)
+                    except Exception as e:
+                        # Don't fail the whole process if archiving fails
+                        print(f"Warning: Failed to log to archive: {e}")
+
                     st.download_button(
                         label="Download All Processed Files (ZIP)",
                         data=zip_buffer.getvalue(),
@@ -1454,3 +1537,116 @@ elif mode == "Batch Process Folder":
                     status_text.empty()
                     cancel_container.empty()
                     st.error(f"Error processing files: {e}")
+
+
+# =============================================================================
+# Archive (View Processing History)
+# =============================================================================
+elif mode == "Archive":
+    st.header("Processing Archive")
+    st.markdown(
+        """
+    View your podcast processing history. See what you've processed, with what settings,
+    and when.
+    """
+    )
+
+    # Initialize archive
+    archive = PodcastArchive()
+
+    # Get stats
+    stats = archive.get_stats()
+
+    # Display stats
+    if stats["total_records"] > 0:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Processed", stats["total_records"])
+        with col2:
+            st.metric("Total Chunks", stats["total_chunks_processed"])
+        with col3:
+            # Most common source
+            if stats["source_types"]:
+                most_common = max(stats["source_types"].items(), key=lambda x: x[1])
+                st.metric("Top Source", most_common[0].title())
+
+        st.markdown("---")
+
+        # Search functionality
+        search_query = st.text_input(
+            "Search archive",
+            placeholder="Search by title or podcast name...",
+            key="archive_search",
+        )
+
+        # Get records
+        if search_query:
+            records = archive.search_records(search_query)
+            if records:
+                st.markdown(f"**Found {len(records)} matching records:**")
+            else:
+                st.info("No matching records found.")
+        else:
+            records = archive.get_records(limit=50)  # Show last 50
+            if records:
+                st.markdown(f"**Showing last {len(records)} records:**")
+
+        # Display records
+        for record in records:
+            with st.expander(
+                f"📻 {record.title} — {record.processed_date[:10]}",
+                expanded=False
+            ):
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    st.markdown(f"**Title:** {record.title}")
+                    st.markdown(f"**Processed:** {record.processed_date}")
+                    st.markdown(f"**Source:** {record.source_type.title()}")
+                    if record.podcast_name:
+                        st.markdown(f"**Podcast:** {record.podcast_name}")
+
+                with col2:
+                    st.markdown("**Settings:**")
+                    st.markdown(f"- Volume: {record.db_change:+d} dB")
+                    st.markdown(f"- Speed: {record.speed}x")
+                    if record.split_length:
+                        st.markdown(f"- Split: {record.split_length} min")
+                        st.markdown(f"- Mode: {record.split_mode or 'fixed'}")
+                    st.markdown(f"- Chunks: {record.num_chunks}")
+
+                # Action buttons
+                btn_col1, btn_col2 = st.columns([1, 4])
+                with btn_col1:
+                    if st.button("Delete", key=f"del_{record.id}", type="secondary"):
+                        if archive.delete_record(record.id):
+                            st.success("Record deleted!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to delete record.")
+
+        # Clear archive button
+        if records:
+            st.markdown("---")
+            if st.button("Clear Entire Archive", type="secondary"):
+                if st.checkbox("I'm sure I want to delete all records", key="confirm_clear"):
+                    archive.clear_archive()
+                    st.success("Archive cleared!")
+                    st.rerun()
+    else:
+        st.info("No records in archive yet. Process some podcasts to see them here!")
+
+        st.markdown("""
+### What gets archived?
+
+Every time you process a podcast, episode, or audio file, we automatically save:
+- **Title** and source information
+- **Processing settings** (volume, speed, split length, etc.)
+- **Date and time** of processing
+- **Number of chunks** created
+
+This helps you:
+- Remember what settings worked well
+- Track what you've already processed
+- See your processing history over time
+        """)

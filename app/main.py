@@ -14,6 +14,7 @@ import zipfile
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Optional
 
 
 def setup_environment():
@@ -41,33 +42,30 @@ setup_environment()
 
 import streamlit as st
 
-from audio_tools.process import (
-    full_process_podcast_episode,
-    process_pod,
-    process_podcast_folder,
-    split_podcast,
-)
-from audio_tools.podcast_search import (
-    search_podcasts,
-    search_episodes,
-    get_podcast_episodes,
-    download_episode,
-    format_duration,
-    format_duration_str,
-)
+from audio_tools.archive import PodcastArchive, PodcastRecord
 from audio_tools.chapters import (
     ChapterInfo,
     SplitMode,
     extract_chapters_from_audio,
     get_chapters,
 )
-from audio_tools.youtube_download import (
-    get_video_info,
-    download_audio as download_youtube_audio,
-    format_duration as format_youtube_duration,
-    is_valid_youtube_url,
+from audio_tools.podcast_search import (
+    download_episode,
+    format_duration,
+    format_duration_str,
+    get_podcast_episodes,
+    search_episodes,
+    search_podcasts,
 )
-from audio_tools.archive import PodcastArchive, PodcastRecord
+from audio_tools.process import (
+    full_process_podcast_episode,
+    process_pod,
+    process_podcast_folder,
+    split_podcast,
+)
+from audio_tools.youtube_download import download_audio as download_youtube_audio
+from audio_tools.youtube_download import format_duration as format_youtube_duration
+from audio_tools.youtube_download import get_video_info, is_valid_youtube_url
 
 st.set_page_config(
     page_title="Audio Tools",
@@ -102,11 +100,19 @@ def request_cancel():
 
 class ProcessingCancelled(Exception):
     """Exception raised when processing is cancelled by user."""
+
     pass
 
 
 # Mode options - About first as landing page
-ALL_MODES = ["About", "Process Podcast", "YouTube Audio", "Single File (No Split)", "Batch Process Folder", "Archive"]
+ALL_MODES = [
+    "About",
+    "Process Podcast",
+    "YouTube Audio",
+    "Single File (No Split)",
+    "Batch Process Folder",
+    "Archive",
+]
 
 # Initialize the radio key if not present
 if "mode_radio" not in st.session_state:
@@ -116,7 +122,14 @@ if "mode_radio" not in st.session_state:
 mode = st.sidebar.radio(
     "Mode",
     ALL_MODES,
-    captions=["Welcome & help", "Search or upload podcasts", "Download from YouTube", None, None, "View processing history"],
+    captions=[
+        "Welcome & help",
+        "Search or upload podcasts",
+        "Download from YouTube",
+        None,
+        None,
+        "View processing history",
+    ],
     key="mode_radio",
 )
 
@@ -221,6 +234,7 @@ def save_to_archive(
 
         # Copy all processed files to archive storage
         import shutil
+
         processed_files = list(output_folder.glob("louder_*.mp3"))
         for mp3_file in processed_files:
             shutil.copy2(mp3_file, storage_dir / mp3_file.name)
@@ -259,31 +273,49 @@ if mode == "About":
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        st.button("Process Podcast", type="primary", use_container_width=True, on_click=switch_to_process_podcast)
+        st.button(
+            "Process Podcast",
+            type="primary",
+            use_container_width=True,
+            on_click=switch_to_process_podcast,
+        )
     with col2:
-        st.markdown("Search for podcasts online or upload local MP3 files. Split long episodes into chunks with spoken intros.")
+        st.markdown(
+            "Search for podcasts online or upload local MP3 files. Split long episodes into chunks with spoken intros."
+        )
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        st.button("YouTube Audio", use_container_width=True, on_click=switch_to_youtube_audio)
+        st.button(
+            "YouTube Audio", use_container_width=True, on_click=switch_to_youtube_audio
+        )
     with col2:
-        st.markdown("Download audio from YouTube videos. Just paste a link and process the audio.")
+        st.markdown(
+            "Download audio from YouTube videos. Just paste a link and process the audio."
+        )
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        st.button("Single File", use_container_width=True, on_click=switch_to_single_file)
+        st.button(
+            "Single File", use_container_width=True, on_click=switch_to_single_file
+        )
     with col2:
-        st.markdown("Process a single file without splitting. Add intro and adjust volume.")
+        st.markdown(
+            "Process a single file without splitting. Add intro and adjust volume."
+        )
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        st.button("Batch Process", use_container_width=True, on_click=switch_to_batch_process)
+        st.button(
+            "Batch Process", use_container_width=True, on_click=switch_to_batch_process
+        )
     with col2:
         st.markdown("Process multiple files at once with the same settings.")
 
     st.markdown("---")
 
-    st.markdown("""
+    st.markdown(
+        """
 ## What is Audio Tools?
 
 Audio Tools is designed to make podcast episodes easier to listen to on **Shokz OpenSwim**
@@ -329,7 +361,8 @@ Speed up or slow down playback from **0.5x to 2.0x**. Great for:
 - **10 dB volume boost** works well for most podcasts
 - **1.25x speed** is a good starting point if you want to listen faster
 - **10-minute chunks** balance convenience with not having too many files
-    """)
+    """
+    )
 
 
 # =============================================================================
@@ -370,10 +403,9 @@ elif mode == "Process Podcast":
             Path(tmp_file.name).unlink()
 
         # Create safe filename
-        safe_title = "".join(
-            c if c.isalnum() or c in " -_" else "_"
-            for c in title
-        )[:50]
+        safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)[
+            :50
+        ]
         filename = f"{safe_title}.mp3"
 
         st.session_state.file_for_processing = {
@@ -391,7 +423,9 @@ elif mode == "Process Podcast":
     # Check if we already have a file to process
     if st.session_state.file_for_processing:
         # Show the file info
-        st.success(f"Ready to process: {st.session_state.file_for_processing['filename']}")
+        st.success(
+            f"Ready to process: {st.session_state.file_for_processing['filename']}"
+        )
         if st.button("Choose different file"):
             st.session_state.file_for_processing = None
             st.session_state.chapter_info = None
@@ -443,7 +477,9 @@ elif mode == "Process Podcast":
                                 st.caption(f"by {podcast.get('author', 'Unknown')}")
 
                                 if podcast.get("feed_url"):
-                                    if st.button("View Episodes", key=f"view_{podcast['id']}"):
+                                    if st.button(
+                                        "View Episodes", key=f"view_{podcast['id']}"
+                                    ):
                                         st.session_state.selected_podcast = podcast
                                         st.session_state.podcast_episodes = None
                                         st.rerun()
@@ -495,7 +531,9 @@ elif mode == "Process Podcast":
                         with ctrl_col2:
                             start_idx = current_page * per_page + 1
                             end_idx = min((current_page + 1) * per_page, total_episodes)
-                            st.markdown(f"**Showing {start_idx}-{end_idx} of {total_episodes} episodes**")
+                            st.markdown(
+                                f"**Showing {start_idx}-{end_idx} of {total_episodes} episodes**"
+                            )
 
                         # Get current page of episodes
                         page_start = current_page * per_page
@@ -511,20 +549,28 @@ elif mode == "Process Podcast":
 
                             with col2:
                                 st.markdown(f"**{episode['title']}**")
-                                st.caption(f"from {episode.get('podcast_name', 'Unknown')}")
+                                st.caption(
+                                    f"from {episode.get('podcast_name', 'Unknown')}"
+                                )
                                 duration = format_duration(episode.get("duration_ms"))
                                 if duration:
                                     st.caption(f"Duration: {duration}")
 
                             with col3:
                                 if episode.get("audio_url"):
-                                    if st.button("Select", key=f"sel_ep_{episode['id']}", type="primary"):
+                                    if st.button(
+                                        "Select",
+                                        key=f"sel_ep_{episode['id']}",
+                                        type="primary",
+                                    ):
                                         with st.spinner("Downloading..."):
                                             try:
                                                 download_and_store_episode(
                                                     episode["audio_url"],
                                                     episode["title"],
-                                                    description=episode.get("description"),
+                                                    description=episode.get(
+                                                        "description"
+                                                    ),
                                                 )
                                                 st.rerun()
                                             except Exception as e:
@@ -547,7 +593,10 @@ elif mode == "Process Podcast":
                                         st.session_state.search_episode_page -= 1
                                         st.rerun()
                             with nav_col2:
-                                st.markdown(f"<div style='text-align: center'>Page {current_page + 1} of {total_pages}</div>", unsafe_allow_html=True)
+                                st.markdown(
+                                    f"<div style='text-align: center'>Page {current_page + 1} of {total_pages}</div>",
+                                    unsafe_allow_html=True,
+                                )
                             with nav_col3:
                                 if current_page < total_pages - 1:
                                     if st.button("Next →", key="search_next"):
@@ -601,11 +650,15 @@ elif mode == "Process Podcast":
                     if episode_filter:
                         filter_lower = episode_filter.lower()
                         episodes = [
-                            ep for ep in all_episodes
+                            ep
+                            for ep in all_episodes
                             if filter_lower in ep.get("title", "").lower()
                         ]
                         # Reset to first page when filter changes
-                        if "last_feed_filter" not in st.session_state or st.session_state.last_feed_filter != episode_filter:
+                        if (
+                            "last_feed_filter" not in st.session_state
+                            or st.session_state.last_feed_filter != episode_filter
+                        ):
                             st.session_state.feed_episode_page = 0
                             st.session_state.last_feed_filter = episode_filter
                     else:
@@ -615,7 +668,9 @@ elif mode == "Process Podcast":
                     total_episodes = len(episodes)
                     per_page = st.session_state.episodes_per_page
                     total_pages = max(1, (total_episodes + per_page - 1) // per_page)
-                    current_page = min(st.session_state.feed_episode_page, total_pages - 1)
+                    current_page = min(
+                        st.session_state.feed_episode_page, total_pages - 1
+                    )
 
                     if total_episodes > 0:
                         # Page size selector and page info
@@ -634,7 +689,9 @@ elif mode == "Process Podcast":
                         with ctrl_col2:
                             start_idx = current_page * per_page + 1
                             end_idx = min((current_page + 1) * per_page, total_episodes)
-                            st.markdown(f"**Showing {start_idx}-{end_idx} of {total_episodes} episodes**")
+                            st.markdown(
+                                f"**Showing {start_idx}-{end_idx} of {total_episodes} episodes**"
+                            )
 
                         # Get current page of episodes
                         page_start = current_page * per_page
@@ -650,22 +707,34 @@ elif mode == "Process Podcast":
                                 if duration:
                                     st.caption(f"Duration: {duration}")
                                 if episode.get("release_date"):
-                                    st.caption(f"Released: {episode['release_date'][:10]}")
+                                    st.caption(
+                                        f"Released: {episode['release_date'][:10]}"
+                                    )
 
                             with col2:
                                 if episode.get("audio_url"):
                                     # Show chapter indicator if available
                                     ep_chapters = episode.get("chapters")
                                     if ep_chapters and ep_chapters.has_chapters:
-                                        st.caption(f"📑 {len(ep_chapters.chapters)} chapters")
-                                    if st.button("Select", key=f"sel_feed_{page_start + i}", type="primary"):
+                                        st.caption(
+                                            f"📑 {len(ep_chapters.chapters)} chapters"
+                                        )
+                                    if st.button(
+                                        "Select",
+                                        key=f"sel_feed_{page_start + i}",
+                                        type="primary",
+                                    ):
                                         with st.spinner("Downloading..."):
                                             try:
                                                 download_and_store_episode(
                                                     episode["audio_url"],
                                                     episode["title"],
-                                                    chapter_info=episode.get("chapters"),
-                                                    description=episode.get("description"),
+                                                    chapter_info=episode.get(
+                                                        "chapters"
+                                                    ),
+                                                    description=episode.get(
+                                                        "description"
+                                                    ),
                                                 )
                                                 st.rerun()
                                             except Exception as e:
@@ -688,7 +757,10 @@ elif mode == "Process Podcast":
                                         st.session_state.feed_episode_page -= 1
                                         st.rerun()
                             with nav_col2:
-                                st.markdown(f"<div style='text-align: center'>Page {current_page + 1} of {total_pages}</div>", unsafe_allow_html=True)
+                                st.markdown(
+                                    f"<div style='text-align: center'>Page {current_page + 1} of {total_pages}</div>",
+                                    unsafe_allow_html=True,
+                                )
                             with nav_col3:
                                 if current_page < total_pages - 1:
                                     if st.button("Next →", key="feed_next"):
@@ -698,7 +770,9 @@ elif mode == "Process Podcast":
                         st.info("No episodes match your search.")
 
         with upload_tab:
-            uploaded_file = st.file_uploader("Upload MP3 file", type=["mp3"], key="upload_local")
+            uploaded_file = st.file_uploader(
+                "Upload MP3 file", type=["mp3"], key="upload_local"
+            )
             if uploaded_file is not None:
                 # Store uploaded file in session state
                 st.session_state.file_for_processing = {
@@ -788,7 +862,10 @@ elif mode == "Process Podcast":
 
         # Chapter preview if available
         if has_chapters:
-            with st.expander(f"📑 Preview Chapters ({len(chapter_info.chapters)} chapters)", expanded=False):
+            with st.expander(
+                f"📑 Preview Chapters ({len(chapter_info.chapters)} chapters)",
+                expanded=False,
+            ):
                 for i, ch in enumerate(chapter_info.chapters):
                     st.markdown(f"**{i + 1}. {ch.title}** — {ch.start_time_str()}")
 
@@ -820,10 +897,14 @@ elif mode == "Process Podcast":
         # Estimate audio duration: ~1 MB per minute for typical MP3 at 128kbps
         estimated_duration_min = file_size_mb * 1.0
         # After speed adjustment, duration changes
-        adjusted_duration_min = estimated_duration_min / speed if speed != 1.0 else estimated_duration_min
+        adjusted_duration_min = (
+            estimated_duration_min / speed if speed != 1.0 else estimated_duration_min
+        )
         estimated_chunks = max(1, int(adjusted_duration_min / split_length) + 1)
         estimated_time = estimate_processing_time(file_size_mb, speed, estimated_chunks)
-        st.info(f"Estimated processing time: {format_time(estimated_time)} ({estimated_chunks} chunks)")
+        st.info(
+            f"Estimated processing time: {format_time(estimated_time)} ({estimated_chunks} chunks)"
+        )
 
         if st.button("Process File", type="primary", key="full_process_btn"):
             # Reset cancel flag at start of processing
@@ -836,7 +917,9 @@ elif mode == "Process Podcast":
             progress_bar = st.progress(0)
             status_text = st.empty()
             cancel_container = st.empty()
-            cancel_container.button("Cancel", key="cancel_full_process", on_click=request_cancel)
+            cancel_container.button(
+                "Cancel", key="cancel_full_process", on_click=request_cancel
+            )
 
             # Create temp directory for processing
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -846,7 +929,9 @@ elif mode == "Process Podcast":
                 input_path = tmp_dir / file_name
                 input_path.write_bytes(file_bytes)
 
-                last_chunk_time = [start_time]  # Use list to allow mutation in nested function
+                last_chunk_time = [
+                    start_time
+                ]  # Use list to allow mutation in nested function
 
                 def update_progress(current, total, message):
                     # Check for cancellation
@@ -894,7 +979,9 @@ elif mode == "Process Podcast":
 
                     # Update progress for zip creation
                     elapsed = time.time() - start_time
-                    status_text.text(f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}")
+                    status_text.text(
+                        f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}"
+                    )
 
                     # Create zip file of all processed chunks
                     zip_buffer = BytesIO()
@@ -915,7 +1002,9 @@ elif mode == "Process Podcast":
                     processed_files = sorted(output_folder.glob("louder_*.mp3"))
                     num_files = len(processed_files)
                     elapsed_time = time.time() - start_time
-                    st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
+                    st.success(
+                        f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}."
+                    )
 
                     # Save to archive
                     archive_settings = {
@@ -995,10 +1084,9 @@ elif mode == "YouTube Audio":
         downloaded_path.unlink(missing_ok=True)
 
         # Create safe filename
-        safe_title = "".join(
-            c if c.isalnum() or c in " -_" else "_"
-            for c in title
-        )[:50]
+        safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)[
+            :50
+        ]
         filename = f"{safe_title}.mp3"
 
         st.session_state.youtube_file_for_processing = {
@@ -1009,7 +1097,9 @@ elif mode == "YouTube Audio":
     # Check if we already have a file to process
     if st.session_state.youtube_file_for_processing:
         # Show the file info
-        st.success(f"Ready to process: {st.session_state.youtube_file_for_processing['filename']}")
+        st.success(
+            f"Ready to process: {st.session_state.youtube_file_for_processing['filename']}"
+        )
         if st.button("Download different video", key="youtube_choose_different"):
             st.session_state.youtube_file_for_processing = None
             st.rerun()
@@ -1038,11 +1128,15 @@ elif mode == "YouTube Audio":
                         with col2:
                             st.markdown(f"**{video_info['title']}**")
                             st.caption(f"by {video_info.get('uploader', 'Unknown')}")
-                            duration = format_youtube_duration(video_info.get("duration"))
+                            duration = format_youtube_duration(
+                                video_info.get("duration")
+                            )
                             if duration:
                                 st.caption(f"Duration: {duration}")
 
-                        if st.button("Download Audio", type="primary", key="youtube_download_btn"):
+                        if st.button(
+                            "Download Audio", type="primary", key="youtube_download_btn"
+                        ):
                             progress_bar = st.progress(0)
                             status_text = st.empty()
 
@@ -1052,7 +1146,9 @@ elif mode == "YouTube Audio":
 
                             try:
                                 with st.spinner("Downloading and converting..."):
-                                    download_and_store_youtube(youtube_url, video_info["title"])
+                                    download_and_store_youtube(
+                                        youtube_url, video_info["title"]
+                                    )
                                 progress_bar.empty()
                                 status_text.empty()
                                 st.rerun()
@@ -1118,10 +1214,14 @@ elif mode == "YouTube Audio":
         # Estimate audio duration: ~1 MB per minute for typical MP3 at 128kbps
         estimated_duration_min = file_size_mb * 1.0
         # After speed adjustment, duration changes
-        adjusted_duration_min = estimated_duration_min / speed if speed != 1.0 else estimated_duration_min
+        adjusted_duration_min = (
+            estimated_duration_min / speed if speed != 1.0 else estimated_duration_min
+        )
         estimated_chunks = max(1, int(adjusted_duration_min / split_length) + 1)
         estimated_time = estimate_processing_time(file_size_mb, speed, estimated_chunks)
-        st.info(f"Estimated processing time: {format_time(estimated_time)} ({estimated_chunks} chunks)")
+        st.info(
+            f"Estimated processing time: {format_time(estimated_time)} ({estimated_chunks} chunks)"
+        )
 
         if st.button("Process File", type="primary", key="youtube_process_btn"):
             # Reset cancel flag at start of processing
@@ -1134,7 +1234,9 @@ elif mode == "YouTube Audio":
             progress_bar = st.progress(0)
             status_text = st.empty()
             cancel_container = st.empty()
-            cancel_container.button("Cancel", key="cancel_youtube_process", on_click=request_cancel)
+            cancel_container.button(
+                "Cancel", key="cancel_youtube_process", on_click=request_cancel
+            )
 
             # Create temp directory for processing
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1144,7 +1246,9 @@ elif mode == "YouTube Audio":
                 input_path = tmp_dir / file_name
                 input_path.write_bytes(file_bytes)
 
-                last_chunk_time = [start_time]  # Use list to allow mutation in nested function
+                last_chunk_time = [
+                    start_time
+                ]  # Use list to allow mutation in nested function
 
                 def update_progress(current, total, message):
                     # Check for cancellation
@@ -1189,7 +1293,9 @@ elif mode == "YouTube Audio":
 
                     # Update progress for zip creation
                     elapsed = time.time() - start_time
-                    status_text.text(f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}")
+                    status_text.text(
+                        f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}"
+                    )
 
                     # Create zip file of all processed chunks
                     zip_buffer = BytesIO()
@@ -1210,7 +1316,9 @@ elif mode == "YouTube Audio":
                     processed_files = sorted(output_folder.glob("louder_*.mp3"))
                     num_files = len(processed_files)
                     elapsed_time = time.time() - start_time
-                    st.success(f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}.")
+                    st.success(
+                        f"Processing complete! Created {num_files} chunks in {format_time(elapsed_time, prefix='')}."
+                    )
 
                     # Save to archive
                     archive_settings = {
@@ -1267,7 +1375,9 @@ elif mode == "Single File (No Split)":
     st.header("Process Single File")
     st.markdown("Upload an MP3 file to add a spoken intro and adjust volume.")
 
-    uploaded_file = st.file_uploader("Upload MP3 file", type=["mp3"], key="single_file_uploader")
+    uploaded_file = st.file_uploader(
+        "Upload MP3 file", type=["mp3"], key="single_file_uploader"
+    )
 
     col1, col2, col3 = st.columns(3)
 
@@ -1319,12 +1429,12 @@ elif mode == "Single File (No Split)":
             status_text = st.empty()
             status_text.text("Processing audio...")
             cancel_container = st.empty()
-            cancel_container.button("Cancel", key="cancel_single_file", on_click=request_cancel)
+            cancel_container.button(
+                "Cancel", key="cancel_single_file", on_click=request_cancel
+            )
 
             # Save uploaded file to temp location
-            with tempfile.NamedTemporaryFile(
-                suffix=".mp3", delete=False
-            ) as tmp_file:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
                 tmp_path = tmp_file.name
 
@@ -1359,7 +1469,9 @@ elif mode == "Single File (No Split)":
                 cancel_container.empty()
 
                 elapsed_time = time.time() - start_time
-                st.success(f"Processing complete! Took {format_time(elapsed_time, prefix='')}.")
+                st.success(
+                    f"Processing complete! Took {format_time(elapsed_time, prefix='')}."
+                )
 
                 # Preview processed audio
                 st.markdown("**Preview processed audio:**")
@@ -1443,7 +1555,9 @@ elif mode == "Batch Process Folder":
 
         # Estimate processing time based on total file size and settings
         total_size_mb = sum(len(f.getvalue()) for f in uploaded_files) / (1024 * 1024)
-        estimated_time = estimate_processing_time(total_size_mb, speed, num_chunks=len(uploaded_files))
+        estimated_time = estimate_processing_time(
+            total_size_mb, speed, num_chunks=len(uploaded_files)
+        )
         st.info(f"Estimated processing time: {format_time(estimated_time)}")
 
         if st.button("Process All Files", type="primary", key="batch_btn"):
@@ -1457,7 +1571,9 @@ elif mode == "Batch Process Folder":
             progress_bar = st.progress(0)
             status_text = st.empty()
             cancel_container = st.empty()
-            cancel_container.button("Cancel", key="cancel_batch", on_click=request_cancel)
+            cancel_container.button(
+                "Cancel", key="cancel_batch", on_click=request_cancel
+            )
 
             # Create temp directory for processing
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1480,7 +1596,9 @@ elif mode == "Batch Process Folder":
 
                         # Update progress
                         elapsed = time.time() - start_time
-                        status_text.text(f"Processing {uploaded_file.name} ({i+1}/{total_files})... | Elapsed: {format_time(elapsed, prefix='')}")
+                        status_text.text(
+                            f"Processing {uploaded_file.name} ({i+1}/{total_files})... | Elapsed: {format_time(elapsed, prefix='')}"
+                        )
                         progress_bar.progress((i) / total_files)
 
                         # Process the file
@@ -1502,7 +1620,9 @@ elif mode == "Batch Process Folder":
 
                     # Create zip of all processed files
                     elapsed = time.time() - start_time
-                    status_text.text(f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}")
+                    status_text.text(
+                        f"Creating ZIP file... | Elapsed: {format_time(elapsed, prefix='')}"
+                    )
 
                     zip_buffer = BytesIO()
                     with zipfile.ZipFile(
@@ -1520,7 +1640,9 @@ elif mode == "Batch Process Folder":
 
                     num_processed = len(list(output_dir.glob("*.mp3")))
                     elapsed_time = time.time() - start_time
-                    st.success(f"Processing complete! Processed {num_processed} files in {format_time(elapsed_time, prefix='')}.")
+                    st.success(
+                        f"Processing complete! Processed {num_processed} files in {format_time(elapsed_time, prefix='')}."
+                    )
 
                     st.download_button(
                         label="Download All Processed Files (ZIP)",
@@ -1533,7 +1655,9 @@ elif mode == "Batch Process Folder":
                     progress_bar.empty()
                     status_text.empty()
                     cancel_container.empty()
-                    st.warning(f"Processing cancelled. {processed_count} of {total_files} files were processed.")
+                    st.warning(
+                        f"Processing cancelled. {processed_count} of {total_files} files were processed."
+                    )
                     st.session_state.cancel_requested = False
 
                 except Exception as e:
@@ -1562,7 +1686,9 @@ elif mode == "Archive":
 
     with view_tabs[0]:
         if not archive.records:
-            st.info("No processed podcasts in archive yet. Process some podcasts to see them here!")
+            st.info(
+                "No processed podcasts in archive yet. Process some podcasts to see them here!"
+            )
         else:
             # Statistics
             stats = archive.get_statistics()
@@ -1593,7 +1719,9 @@ elif mode == "Archive":
                 display_records = archive.records
 
             # Display records in reverse chronological order (newest first)
-            display_records = sorted(display_records, key=lambda r: r.date, reverse=True)
+            display_records = sorted(
+                display_records, key=lambda r: r.date, reverse=True
+            )
 
             for record in display_records:
                 with st.container():
@@ -1607,7 +1735,9 @@ elif mode == "Archive":
                             date_str = date_obj.strftime("%Y-%m-%d %H:%M")
                         except:
                             date_str = record.date
-                        st.caption(f"Processed: {date_str} | Source: {record.source_type} | Chunks: {record.num_chunks}")
+                        st.caption(
+                            f"Processed: {date_str} | Source: {record.source_type} | Chunks: {record.num_chunks}"
+                        )
 
                     with col2:
                         # Download button for processed files
@@ -1616,8 +1746,12 @@ elif mode == "Archive":
                             if processed_dir.exists():
                                 # Create zip of processed files on-the-fly
                                 zip_buffer = BytesIO()
-                                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                                    for mp3_file in sorted(processed_dir.glob("louder_*.mp3")):
+                                with zipfile.ZipFile(
+                                    zip_buffer, "w", zipfile.ZIP_DEFLATED
+                                ) as zip_file:
+                                    for mp3_file in sorted(
+                                        processed_dir.glob("louder_*.mp3")
+                                    ):
                                         zip_file.write(mp3_file, mp3_file.name)
                                 zip_buffer.seek(0)
 
@@ -1639,7 +1773,9 @@ elif mode == "Archive":
                         st.json(record.settings)
 
                         # Delete button
-                        if st.button("Delete Record", key=f"delete_{record.id}", type="secondary"):
+                        if st.button(
+                            "Delete Record", key=f"delete_{record.id}", type="secondary"
+                        ):
                             if archive.delete_record(record.id):
                                 st.success("Record deleted!")
                                 st.rerun()
@@ -1651,13 +1787,16 @@ elif mode == "Archive":
             # Clear all button
             st.markdown("### Archive Management")
             if st.button("Clear Entire Archive", type="secondary"):
-                if st.button("Confirm Clear All", type="secondary", key="confirm_clear"):
+                if st.button(
+                    "Confirm Clear All", type="secondary", key="confirm_clear"
+                ):
                     archive.clear_all()
                     st.success("Archive cleared!")
                     st.rerun()
 
     with view_tabs[1]:
-        st.markdown("""
+        st.markdown(
+            """
 ### About the Archive
 
 The archive automatically saves processed podcasts so you can:
@@ -1686,5 +1825,5 @@ Each processed podcast takes up disk space. To free up space:
 2. Or clear the entire archive using the "Clear Entire Archive" button
 
 Deleting a record removes both the metadata and the associated audio files.
-        """)
-
+        """
+        )
